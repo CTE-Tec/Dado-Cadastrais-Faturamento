@@ -303,7 +303,7 @@ export default function Home() {
 
       const prazoSettings = buildOption(perfil?.prazo_vencimento_dias ?? null);
 
-      reset({
+      const resetValues = {
         ...defaultFormValues,
         preenchedorNome: cliente.preenchedor_nome ?? "",
         preenchedorEmail: cliente.preenchedor_email ?? "",
@@ -366,7 +366,22 @@ export default function Home() {
         artFinalidadeObra: perfil?.art_finalidade_obra ?? "Comercial",
         artAutorizacaoArt: perfil?.art_autorizacao_art ?? false,
         feedbackNota: perfil?.feedback_nota ?? undefined
-      });
+      };
+
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem("form_state_general_v3");
+        if (saved) {
+          try {
+            const parsed = JSON.parse(saved);
+            Object.assign(resetValues, parsed);
+            setSavedLocallyTime(new Date().toLocaleTimeString());
+          } catch (e) {
+            console.error("Error parsing local storage form state", e);
+          }
+        }
+      }
+
+      reset(resetValues);
 
       setClientId(clientIdString);
       setLoadingClient(false);
@@ -374,23 +389,6 @@ export default function Home() {
 
     loadClient();
   }, [mounted, reset]);
-
-  // Load state from localStorage on mount
-  useEffect(() => {
-    if (!mounted || clientId || loadingClient) return;
-    const saved = localStorage.getItem("form_state_general_v3");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        Object.keys(parsed).forEach((key) => {
-          setValue(key as any, parsed[key]);
-        });
-        setSavedLocallyTime(new Date().toLocaleTimeString());
-      } catch (e) {
-        console.error("Error parsing local storage form state", e);
-      }
-    }
-  }, [mounted, clientId, loadingClient, setValue]);
 
   // Autosave to localStorage on any input change
   useEffect(() => {
