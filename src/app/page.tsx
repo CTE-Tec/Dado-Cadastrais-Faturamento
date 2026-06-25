@@ -533,50 +533,72 @@ export default function Home() {
       // Calculate deadline days
       const prazoDias = getPrazoVencimentoDias(data);
 
-      // 2. Upsert Billing Profile for the existing client
-      const { error: billingErr } = await supabase
+      // 2. Update or insert Billing Profile for the existing client
+      const { data: existingProfile, error: existingProfileErr } = await supabase
         .from("faturamento_perfis")
-        .upsert({
-          cliente_id: clientId,
-          cobranca_mesmo_endereco: data.cobrancaMesmoEndereco,
-          cobranca_endereco_completo: data.cobrancaEnderecoCompleto,
-          cobranca_cep: data.cobrancaCep ? data.cobrancaCep.replace(/\D/g, "") : null,
-          cobranca_cidade_uf: data.cobrancaCidadeUf,
-          cobranca_observacoes: data.cobrancaObservacoes,
-          prazo_vencimento_dias: prazoDias,
-          janela_medicao_inicio: data.janelaMedicaoInicio,
-          janela_medicao_fim: data.janelaMedicaoFim,
-          periodo_medicao_inicio: data.periodoMedicaoInicio,
-          periodo_medicao_fim: data.periodoMedicaoFim,
-          has_purchase_order: data.hasPurchaseOrder,
-          po_document_url: data.poDocumentUrl,
-          data_inicio_obra: data.dataInicioObra || null,
-          data_fim_obra: data.dataFimObra || null,
-          elaborar_contrato: data.elaborarContrato,
-          documentacao_necessaria: data.documentacaoNecessaria,
-          faturamento_mesmos_dados: data.faturamentoMesmosDados,
-          faturamento_razao_social: data.faturamentoRazaoSocial,
-          faturamento_cnpj: data.faturamentoCnpj ? data.faturamentoCnpj.replace(/\D/g, "") : null,
-          faturamento_inscricao_estadual: data.faturamentoInscricaoEstadual,
-          faturamento_endereco: data.faturamentoEndereco,
-          faturamento_cep: data.faturamentoCep ? data.faturamentoCep.replace(/\D/g, "") : null,
-          faturamento_cidade_uf: data.faturamentoCidadeUf,
-          faturamento_obs_nf: data.faturamentoObsNf,
-          necessita_art: data.necessitaArt,
-          art_mesmos_dados: data.artMesmosDados,
-          art_razao_social: data.artRazaoSocial,
-          art_cnpj: data.artCnpj ? data.artCnpj.replace(/\D/g, "") : null,
-          art_endereco: data.artEndereco,
-          art_cep: data.artCep ? data.artCep.replace(/\D/g, "") : null,
-          art_cidade_uf: data.artCidadeUf,
-          art_endereco_obra: data.artEnderecoObra,
-          art_cep_obra: data.artCepObra ? data.artCepObra.replace(/\D/g, "") : null,
-          art_cidade_estado_obra: data.artCidadeEstadoObra,
-          art_area_construida: data.artAreaConstruida || null,
-          art_finalidade_obra: data.artFinalidadeObra,
-          art_autorizacao_art: data.artAutorizacaoArt,
-          feedback_nota: data.feedbackNota || null
-        }, { onConflict: "cliente_id" });
+        .select("id")
+        .eq("cliente_id", clientId)
+        .maybeSingle();
+
+      if (existingProfileErr) {
+        throw existingProfileErr;
+      }
+
+      const profilePayload = {
+        cliente_id: clientId,
+        cobranca_mesmo_endereco: data.cobrancaMesmoEndereco,
+        cobranca_endereco_completo: data.cobrancaEnderecoCompleto,
+        cobranca_cep: data.cobrancaCep ? data.cobrancaCep.replace(/\D/g, "") : null,
+        cobranca_cidade_uf: data.cobrancaCidadeUf,
+        cobranca_observacoes: data.cobrancaObservacoes,
+        prazo_vencimento_dias: prazoDias,
+        janela_medicao_inicio: data.janelaMedicaoInicio,
+        janela_medicao_fim: data.janelaMedicaoFim,
+        periodo_medicao_inicio: data.periodoMedicaoInicio,
+        periodo_medicao_fim: data.periodoMedicaoFim,
+        has_purchase_order: data.hasPurchaseOrder,
+        po_document_url: data.poDocumentUrl,
+        data_inicio_obra: data.dataInicioObra || null,
+        data_fim_obra: data.dataFimObra || null,
+        elaborar_contrato: data.elaborarContrato,
+        documentacao_necessaria: data.documentacaoNecessaria,
+        faturamento_mesmos_dados: data.faturamentoMesmosDados,
+        faturamento_razao_social: data.faturamentoRazaoSocial,
+        faturamento_cnpj: data.faturamentoCnpj ? data.faturamentoCnpj.replace(/\D/g, "") : null,
+        faturamento_inscricao_estadual: data.faturamentoInscricaoEstadual,
+        faturamento_endereco: data.faturamentoEndereco,
+        faturamento_cep: data.faturamentoCep ? data.faturamentoCep.replace(/\D/g, "") : null,
+        faturamento_cidade_uf: data.faturamentoCidadeUf,
+        faturamento_obs_nf: data.faturamentoObsNf,
+        necessita_art: data.necessitaArt,
+        art_mesmos_dados: data.artMesmosDados,
+        art_razao_social: data.artRazaoSocial,
+        art_cnpj: data.artCnpj ? data.artCnpj.replace(/\D/g, "") : null,
+        art_endereco: data.artEndereco,
+        art_cep: data.artCep ? data.artCep.replace(/\D/g, "") : null,
+        art_cidade_uf: data.artCidadeUf,
+        art_endereco_obra: data.artEnderecoObra,
+        art_cep_obra: data.artCepObra ? data.artCepObra.replace(/\D/g, "") : null,
+        art_cidade_estado_obra: data.artCidadeEstadoObra,
+        art_area_construida: data.artAreaConstruida || null,
+        art_finalidade_obra: data.artFinalidadeObra,
+        art_autorizacao_art: data.artAutorizacaoArt,
+        feedback_nota: data.feedbackNota || null
+      };
+
+      let billingErr;
+      if (existingProfile?.id) {
+        const { error } = await supabase
+          .from("faturamento_perfis")
+          .update(profilePayload)
+          .eq("id", existingProfile.id);
+        billingErr = error;
+      } else {
+        const { error } = await supabase
+          .from("faturamento_perfis")
+          .insert(profilePayload);
+        billingErr = error;
+      }
 
       if (billingErr) throw billingErr;
 
