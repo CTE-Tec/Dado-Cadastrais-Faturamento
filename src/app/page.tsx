@@ -4,7 +4,6 @@ import React, { useEffect, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { formatCNPJ, formatPhone, formatCEP } from "@/lib/masks";
 import { 
@@ -204,8 +203,8 @@ const finalidadesObra = [
 ];
 
 export default function Home() {
-  const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
+  const [clientIdParam, setClientIdParam] = useState<string | null>(null);
   const [loadingClient, setLoadingClient] = useState(true);
   const [pageBlockedReason, setPageBlockedReason] = useState<string | null>(null);
   const [clientId, setClientId] = useState<number | null>(null);
@@ -248,7 +247,11 @@ export default function Home() {
   // Load client and profile by id param, block page if invalid or not found
   useEffect(() => {
     if (!mounted) return;
-    const idParam = searchParams?.get("id");
+    const search = typeof window !== "undefined" ? window.location.search : "";
+    const params = new URLSearchParams(search);
+    const idParam = params.get("id");
+    setClientIdParam(idParam);
+
     if (!idParam) {
       setPageBlockedReason("Link inválido: parâmetro id ausente.");
       setLoadingClient(false);
@@ -369,7 +372,7 @@ export default function Home() {
     };
 
     loadClient();
-  }, [mounted, searchParams, reset]);
+  }, [mounted, reset]);
 
   // Load state from localStorage on mount
   useEffect(() => {
