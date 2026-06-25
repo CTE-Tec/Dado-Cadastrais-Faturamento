@@ -348,7 +348,6 @@ export default function Home() {
         faturamentoCep: perfil?.faturamento_cep ? formatCEP(perfil.faturamento_cep) : "",
         faturamentoCidadeUf: perfil?.faturamento_cidade_uf ?? "",
         faturamentoObsNf: perfil?.faturamento_obs_nf ?? "",
-        elaborarContrato: perfil?.elaborar_contrato ?? true,
         necessitaArt: perfil?.necessita_art ?? false,
         artMesmosDados: perfil?.art_mesmos_dados ?? true,
         artRazaoSocial: perfil?.art_razao_social ?? "",
