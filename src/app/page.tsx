@@ -207,7 +207,7 @@ export default function Home() {
   const [clientIdParam, setClientIdParam] = useState<string | null>(null);
   const [loadingClient, setLoadingClient] = useState(true);
   const [pageBlockedReason, setPageBlockedReason] = useState<string | null>(null);
-  const [clientId, setClientId] = useState<number | null>(null);
+  const [clientId, setClientId] = useState<string | null>(null);
   const [loadingCNPJ, setLoadingCNPJ] = useState(false);
   const [cnpjError, setCnpjError] = useState("");
   const [cnpjInfoMessage, setCnpjInfoMessage] = useState("");
@@ -250,7 +250,6 @@ export default function Home() {
     const search = typeof window !== "undefined" ? window.location.search : "";
     const params = new URLSearchParams(search);
     const idParam = params.get("id");
-    setClientIdParam(idParam);
 
     if (!idParam) {
       setPageBlockedReason("Link inválido: parâmetro id ausente.");
@@ -258,12 +257,8 @@ export default function Home() {
       return;
     }
 
-    const clientIdNumber = parseInt(idParam, 10);
-    if (Number.isNaN(clientIdNumber)) {
-      setPageBlockedReason("Link inválido: id do cliente não é um número válido.");
-      setLoadingClient(false);
-      return;
-    }
+    const clientIdString = idParam;
+    setClientIdParam(clientIdString);
 
     const loadClient = async () => {
       setLoadingClient(true);
@@ -272,11 +267,13 @@ export default function Home() {
       const { data: cliente, error: clienteErr } = await supabase
         .from("clientes")
         .select("*")
-        .eq("id", clientIdNumber)
+        .eq("id", clientIdString)
         .single();
 
       if (clienteErr || !cliente) {
-        setPageBlockedReason("Cliente não encontrado. Verifique se o link está correto.");
+        const errorMessage = clienteErr?.message || "Cliente não encontrado. Verifique se o link está correto.";
+        console.error("Cliente fetch error:", clienteErr, clientIdString);
+        setPageBlockedReason(errorMessage);
         setLoadingClient(false);
         return;
       }
@@ -284,8 +281,12 @@ export default function Home() {
       const { data: perfil, error: perfilErr } = await supabase
         .from("faturamento_perfis")
         .select("*")
-        .eq("cliente_id", clientIdNumber)
-        .single();
+        .eq("cliente_id", clientIdString)
+        .maybeSingle();
+
+      if (perfilErr) {
+        console.warn("Perfil fetch warning:", perfilErr, clientIdString);
+      }
 
       const buildOption = (days: number | null | undefined): { option: string; other: string } => {
         if (!days) {
@@ -367,7 +368,7 @@ export default function Home() {
         feedbackNota: perfil?.feedback_nota ?? undefined
       });
 
-      setClientId(clientIdNumber);
+      setClientId(clientIdString);
       setLoadingClient(false);
     };
 
