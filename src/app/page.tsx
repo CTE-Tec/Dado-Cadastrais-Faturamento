@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { formatCNPJ, formatPhone, formatCEP } from "@/lib/masks";
 import { 
@@ -20,7 +21,8 @@ import {
   Sparkles,
   Search,
   AlertTriangle,
-  Briefcase
+  Briefcase,
+  Lock
 } from "lucide-react";
 
 // Zod validation schema matching Excel fields + Identification filler details
@@ -109,6 +111,70 @@ const formSchema = z.object({
 
 type FormData = z.infer<typeof formSchema>;
 
+const defaultFormValues: FormData = {
+  preenchedorNome: "",
+  preenchedorEmail: "",
+  cnpj: "",
+  razaoSocial: "",
+  nomeFantasia: "",
+  nomeEmpreendimento: "",
+  inscricaoEstadual: "",
+  observacaoGeral: "",
+  cep: "",
+  logradouro: "",
+  numero: "",
+  complemento: "",
+  bairro: "",
+  cidade: "",
+  estado: "",
+  contatoTecnicoNome: "",
+  contatoTecnicoCargo: "",
+  contatoTecnicoTelefone: "",
+  contatoTecnicoEmail: "",
+  contatoCobrancaNome: "",
+  contatoCobrancaTelefone: "",
+  contatoCobrancaEmail: "",
+  cobrancaMesmoEndereco: true,
+  cobrancaEnderecoCompleto: "",
+  cobrancaCep: "",
+  cobrancaCidadeUf: "",
+  cobrancaObservacoes: "",
+  prazoVencimentoOpcao: "15 dias corridos",
+  prazoVencimentoOutro: "",
+  janelaMedicaoInicio: 10,
+  janelaMedicaoFim: 15,
+  periodoMedicaoInicio: 1,
+  periodoMedicaoFim: 30,
+  hasPurchaseOrder: false,
+  poDocumentUrl: "",
+  dataInicioObra: "",
+  dataFimObra: "",
+  elaborarContrato: true,
+  documentacaoNecessaria: [],
+  faturamentoMesmosDados: true,
+  faturamentoRazaoSocial: "",
+  faturamentoCnpj: "",
+  faturamentoInscricaoEstadual: "",
+  faturamentoEndereco: "",
+  faturamentoCep: "",
+  faturamentoCidadeUf: "",
+  faturamentoObsNf: "",
+  necessitaArt: false,
+  artMesmosDados: true,
+  artRazaoSocial: "",
+  artCnpj: "",
+  artEndereco: "",
+  artCep: "",
+  artCidadeUf: "",
+  artEnderecoObra: "",
+  artCepObra: "",
+  artCidadeEstadoObra: "",
+  artAreaConstruida: 0,
+  artFinalidadeObra: "Comercial",
+  artAutorizacaoArt: false,
+  feedbackNota: undefined
+};
+
 const docTypes = [
   "Cartão CNPJ",
   "Contrato Social",
@@ -138,7 +204,11 @@ const finalidadesObra = [
 ];
 
 export default function Home() {
+  const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
+  const [loadingClient, setLoadingClient] = useState(true);
+  const [pageBlockedReason, setPageBlockedReason] = useState<string | null>(null);
+  const [clientId, setClientId] = useState<number | null>(null);
   const [loadingCNPJ, setLoadingCNPJ] = useState(false);
   const [cnpjError, setCnpjError] = useState("");
   const [cnpjInfoMessage, setCnpjInfoMessage] = useState("");
@@ -151,75 +221,14 @@ export default function Home() {
     register,
     handleSubmit,
     setValue,
+    reset,
     watch,
     control,
     trigger,
     formState: { errors }
   } = useForm({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      preenchedorNome: "",
-      preenchedorEmail: "",
-      cnpj: "",
-      razaoSocial: "",
-      nomeFantasia: "",
-      nomeEmpreendimento: "",
-      inscricaoEstadual: "",
-      observacaoGeral: "",
-      cep: "",
-      logradouro: "",
-      numero: "",
-      complemento: "",
-      bairro: "",
-      cidade: "",
-      estado: "",
-      contatoTecnicoNome: "",
-      contatoTecnicoCargo: "",
-      contatoTecnicoTelefone: "",
-      contatoTecnicoEmail: "",
-      contatoCobrancaNome: "",
-      contatoCobrancaTelefone: "",
-      contatoCobrancaEmail: "",
-      cobrancaMesmoEndereco: true,
-      cobrancaEnderecoCompleto: "",
-      cobrancaCep: "",
-      cobrancaCidadeUf: "",
-      cobrancaObservacoes: "",
-      prazoVencimentoOpcao: "15 dias corridos",
-      prazoVencimentoOutro: "",
-      janelaMedicaoInicio: 10,
-      janelaMedicaoFim: 15,
-      periodoMedicaoInicio: 1,
-      periodoMedicaoFim: 30,
-      hasPurchaseOrder: false,
-      poDocumentUrl: "",
-      dataInicioObra: "",
-      dataFimObra: "",
-      elaborarContrato: true,
-      documentacaoNecessaria: [],
-      faturamentoMesmosDados: true,
-      faturamentoRazaoSocial: "",
-      faturamentoCnpj: "",
-      faturamentoInscricaoEstadual: "",
-      faturamentoEndereco: "",
-      faturamentoCep: "",
-      faturamentoCidadeUf: "",
-      faturamentoObsNf: "",
-      necessitaArt: false,
-      artMesmosDados: true,
-      artRazaoSocial: "",
-      artCnpj: "",
-      artEndereco: "",
-      artCep: "",
-      artCidadeUf: "",
-      artEnderecoObra: "",
-      artCepObra: "",
-      artCidadeEstadoObra: "",
-      artAreaConstruida: 0,
-      artFinalidadeObra: "Comercial",
-      artAutorizacaoArt: false,
-      feedbackNota: undefined
-    }
+    defaultValues: defaultFormValues
   });
 
   const watchAllFields = useWatch({ control });
@@ -236,9 +245,136 @@ export default function Home() {
     setMounted(true);
   }, []);
 
-  // Load state from localStorage on mount
+  // Load client and profile by id param, block page if invalid or not found
   useEffect(() => {
     if (!mounted) return;
+    const idParam = searchParams?.get("id");
+    if (!idParam) {
+      setPageBlockedReason("Link inválido: parâmetro id ausente.");
+      setLoadingClient(false);
+      return;
+    }
+
+    const clientIdNumber = parseInt(idParam, 10);
+    if (Number.isNaN(clientIdNumber)) {
+      setPageBlockedReason("Link inválido: id do cliente não é um número válido.");
+      setLoadingClient(false);
+      return;
+    }
+
+    const loadClient = async () => {
+      setLoadingClient(true);
+      setPageBlockedReason(null);
+
+      const { data: cliente, error: clienteErr } = await supabase
+        .from("clientes")
+        .select("*")
+        .eq("id", clientIdNumber)
+        .single();
+
+      if (clienteErr || !cliente) {
+        setPageBlockedReason("Cliente não encontrado. Verifique se o link está correto.");
+        setLoadingClient(false);
+        return;
+      }
+
+      const { data: perfil, error: perfilErr } = await supabase
+        .from("faturamento_perfis")
+        .select("*")
+        .eq("cliente_id", clientIdNumber)
+        .single();
+
+      const buildOption = (days: number | null | undefined): { option: string; other: string } => {
+        if (!days) {
+          return { option: "15 dias corridos", other: "" };
+        }
+        const mapped = [10, 15, 20, 30].includes(days)
+          ? `${days} dias corridos`
+          : "Outra";
+        return {
+          option: mapped,
+          other: mapped === "Outra" ? String(days) : ""
+        };
+      };
+
+      const prazoSettings = buildOption(perfil?.prazo_vencimento_dias ?? null);
+
+      reset({
+        ...defaultFormValues,
+        preenchedorNome: cliente.preenchedor_nome ?? "",
+        preenchedorEmail: cliente.preenchedor_email ?? "",
+        cnpj: cliente.cnpj ? formatCNPJ(cliente.cnpj) : "",
+        razaoSocial: cliente.razao_social ?? "",
+        nomeFantasia: cliente.nome_fantasia ?? "",
+        nomeEmpreendimento: cliente.nome_empreendimento ?? "",
+        inscricaoEstadual: cliente.inscricao_estadual ?? "",
+        observacaoGeral: cliente.observacao_geral ?? "",
+        cep: cliente.cep ? formatCEP(cliente.cep) : "",
+        logradouro: cliente.logradouro ?? "",
+        numero: cliente.numero ?? "",
+        complemento: cliente.complemento ?? "",
+        bairro: cliente.bairro ?? "",
+        cidade: cliente.cidade ?? "",
+        estado: cliente.estado ?? "",
+        contatoTecnicoNome: cliente.contato_tecnico_nome ?? "",
+        contatoTecnicoCargo: cliente.contato_tecnico_cargo ?? "",
+        contatoTecnicoTelefone: cliente.contato_tecnico_telefone ? formatPhone(cliente.contato_tecnico_telefone) : "",
+        contatoTecnicoEmail: cliente.contato_tecnico_email ?? "",
+        contatoCobrancaNome: cliente.contato_cobranca_nome ?? "",
+        contatoCobrancaTelefone: cliente.contato_cobranca_telefone ? formatPhone(cliente.contato_cobranca_telefone) : "",
+        contatoCobrancaEmail: cliente.contato_cobranca_email ?? "",
+        cobrancaMesmoEndereco: perfil?.cobranca_mesmo_endereco ?? true,
+        cobrancaEnderecoCompleto: perfil?.cobranca_endereco_completo ?? "",
+        cobrancaCep: perfil?.cobranca_cep ? formatCEP(perfil.cobranca_cep) : "",
+        cobrancaCidadeUf: perfil?.cobranca_cidade_uf ?? "",
+        cobrancaObservacoes: perfil?.cobranca_observacoes ?? "",
+        prazoVencimentoOpcao: prazoSettings.option,
+        prazoVencimentoOutro: prazoSettings.other,
+        janelaMedicaoInicio: perfil?.janela_medicao_inicio ?? 10,
+        janelaMedicaoFim: perfil?.janela_medicao_fim ?? 15,
+        periodoMedicaoInicio: perfil?.periodo_medicao_inicio ?? 1,
+        periodoMedicaoFim: perfil?.periodo_medicao_fim ?? 30,
+        hasPurchaseOrder: perfil?.has_purchase_order ?? false,
+        poDocumentUrl: perfil?.po_document_url ?? "",
+        dataInicioObra: perfil?.data_inicio_obra ?? "",
+        dataFimObra: perfil?.data_fim_obra ?? "",
+        elaborarContrato: perfil?.elaborar_contrato ?? true,
+        documentacaoNecessaria: perfil?.documentacao_necessaria ?? [],
+        faturamentoMesmosDados: perfil?.faturamento_mesmos_dados ?? true,
+        faturamentoRazaoSocial: perfil?.faturamento_razao_social ?? "",
+        faturamentoCnpj: perfil?.faturamento_cnpj ? formatCNPJ(perfil.faturamento_cnpj) : "",
+        faturamentoInscricaoEstadual: perfil?.faturamento_inscricao_estadual ?? "",
+        faturamentoEndereco: perfil?.faturamento_endereco ?? "",
+        faturamentoCep: perfil?.faturamento_cep ? formatCEP(perfil.faturamento_cep) : "",
+        faturamentoCidadeUf: perfil?.faturamento_cidade_uf ?? "",
+        faturamentoObsNf: perfil?.faturamento_obs_nf ?? "",
+        elaborarContrato: perfil?.elaborar_contrato ?? true,
+        necessitaArt: perfil?.necessita_art ?? false,
+        artMesmosDados: perfil?.art_mesmos_dados ?? true,
+        artRazaoSocial: perfil?.art_razao_social ?? "",
+        artCnpj: perfil?.art_cnpj ? formatCNPJ(perfil.art_cnpj) : "",
+        artEndereco: perfil?.art_endereco ?? "",
+        artCep: perfil?.art_cep ? formatCEP(perfil.art_cep) : "",
+        artCidadeUf: perfil?.art_cidade_uf ?? "",
+        artEnderecoObra: perfil?.art_endereco_obra ?? "",
+        artCepObra: perfil?.art_cep_obra ? formatCEP(perfil.art_cep_obra) : "",
+        artCidadeEstadoObra: perfil?.art_cidade_estado_obra ?? "",
+        artAreaConstruida: perfil?.art_area_construida ?? 0,
+        artFinalidadeObra: perfil?.art_finalidade_obra ?? "Comercial",
+        artAutorizacaoArt: perfil?.art_autorizacao_art ?? false,
+        feedbackNota: perfil?.feedback_nota ?? undefined
+      });
+
+      setClientId(clientIdNumber);
+      setLoadingClient(false);
+    };
+
+    loadClient();
+  }, [mounted, searchParams, reset]);
+
+  // Load state from localStorage on mount
+  useEffect(() => {
+    if (!mounted || clientId || loadingClient) return;
     const saved = localStorage.getItem("form_state_general_v3");
     if (saved) {
       try {
@@ -251,7 +387,7 @@ export default function Home() {
         console.error("Error parsing local storage form state", e);
       }
     }
-  }, [mounted, setValue]);
+  }, [mounted, clientId, loadingClient, setValue]);
 
   // Autosave to localStorage on any input change
   useEffect(() => {
@@ -353,12 +489,17 @@ export default function Home() {
 
   // Handle submission
   const onSubmit = async (data: FormData) => {
+    if (!clientId) {
+      alert("Cliente não identificado. Atualize a página e tente novamente.");
+      return;
+    }
+
     setSubmitting(true);
     try {
-      // 1. Insert/Upsert Client
-      const { data: clientObj, error: clientErr } = await supabase
+      // 1. Update existing Client
+      const { error: clientErr } = await supabase
         .from("clientes")
-        .upsert({
+        .update({
           cnpj: data.cnpj.replace(/\D/g, ""),
           razao_social: data.razaoSocial,
           nome_fantasia: data.nomeFantasia,
@@ -381,20 +522,19 @@ export default function Home() {
           contato_cobranca_nome: data.contatoCobrancaNome,
           contato_cobranca_telefone: data.contatoCobrancaTelefone.replace(/\D/g, ""),
           contato_cobranca_email: data.contatoCobrancaEmail
-        }, { onConflict: "cnpj" })
-        .select()
-        .single();
+        })
+        .eq("id", clientId);
 
       if (clientErr) throw clientErr;
 
       // Calculate deadline days
       const prazoDias = getPrazoVencimentoDias(data);
 
-      // 2. Insert Billing Profile
+      // 2. Upsert Billing Profile for the existing client
       const { error: billingErr } = await supabase
         .from("faturamento_perfis")
-        .insert({
-          cliente_id: clientObj.id,
+        .upsert({
+          cliente_id: clientId,
           cobranca_mesmo_endereco: data.cobrancaMesmoEndereco,
           cobranca_endereco_completo: data.cobrancaEnderecoCompleto,
           cobranca_cep: data.cobrancaCep ? data.cobrancaCep.replace(/\D/g, "") : null,
@@ -433,11 +573,10 @@ export default function Home() {
           art_finalidade_obra: data.artFinalidadeObra,
           art_autorizacao_art: data.artAutorizacaoArt,
           feedback_nota: data.feedbackNota || null
-        });
+        }, { onConflict: "cliente_id" });
 
       if (billingErr) throw billingErr;
 
-      // Clear local storage on success
       localStorage.removeItem("form_state_general_v3");
       setSubmitSuccess(true);
     } catch (err) {
@@ -498,6 +637,29 @@ export default function Home() {
               Preencher Novamente
             </button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadingClient) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white">
+        <Loader2 className="w-10 h-10 animate-spin text-indigo-500" />
+      </div>
+    );
+  }
+
+  if (pageBlockedReason) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white px-4">
+        <div className="max-w-xl w-full bg-slate-900/90 border border-rose-500/30 rounded-3xl p-8 text-center space-y-5 shadow-2xl shadow-rose-500/10">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-rose-500/10 text-rose-400">
+            <Lock className="w-7 h-7" />
+          </div>
+          <h2 className="text-2xl font-bold text-white">Acesso Bloqueado</h2>
+          <p className="text-slate-300 leading-relaxed">{pageBlockedReason}</p>
+          <p className="text-sm text-slate-500">Verifique o link enviado ou contate o responsável para receber o acesso correto.</p>
         </div>
       </div>
     );
