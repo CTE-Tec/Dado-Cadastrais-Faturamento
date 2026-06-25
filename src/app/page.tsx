@@ -224,7 +224,7 @@ export default function Home() {
     watch,
     control,
     trigger,
-    formState: { errors }
+    formState: { errors, isDirty }
   } = useForm({
     resolver: zodResolver(formSchema),
     defaultValues: defaultFormValues
@@ -368,13 +368,21 @@ export default function Home() {
         feedbackNota: perfil?.feedback_nota ?? undefined
       };
 
-      if (typeof window !== "undefined") {
-        const saved = localStorage.getItem("form_state_general_v3");
+      if (typeof window !== "undefined" && clientIdString) {
+        const savedKey = `form_state_general_v3_${clientIdString}`;
+        const saved = localStorage.getItem(savedKey);
         if (saved) {
           try {
             const parsed = JSON.parse(saved);
-            Object.assign(resetValues, parsed);
-            setSavedLocallyTime(new Date().toLocaleTimeString());
+            const isDefaultSavedState = Object.keys(defaultFormValues).every((key) => {
+              const k = key as keyof FormData;
+              return parsed[k] === undefined || parsed[k] === defaultFormValues[k];
+            });
+
+            if (!isDefaultSavedState) {
+              Object.assign(resetValues, parsed);
+              setSavedLocallyTime(new Date().toLocaleTimeString());
+            }
           } catch (e) {
             console.error("Error parsing local storage form state", e);
           }
@@ -392,15 +400,15 @@ export default function Home() {
 
   // Autosave to localStorage on any input change
   useEffect(() => {
-    if (!mounted) return;
+    if (!mounted || !clientId) return;
     const timer = setTimeout(() => {
       if (Object.keys(watchAllFields).length > 0) {
-        localStorage.setItem("form_state_general_v3", JSON.stringify(watchAllFields));
+        localStorage.setItem(`form_state_general_v3_${clientId}`, JSON.stringify(watchAllFields));
         setSavedLocallyTime(new Date().toLocaleTimeString());
       }
     }, 1000);
     return () => clearTimeout(timer);
-  }, [watchAllFields, mounted]);
+  }, [watchAllFields, mounted, clientId]);
 
   // Handle CNPJ lookup manually via Button
   const handleCNPJSearch = async () => {
@@ -600,7 +608,9 @@ export default function Home() {
 
       if (billingErr) throw billingErr;
 
-      localStorage.removeItem("form_state_general_v3");
+      if (clientId) {
+        localStorage.removeItem(`form_state_general_v3_${clientId}`);
+      }
       setSubmitSuccess(true);
     } catch (err) {
       console.error(err);
