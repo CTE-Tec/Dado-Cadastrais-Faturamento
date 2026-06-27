@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import Image from "next/image";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -66,6 +67,7 @@ const formSchema = z.object({
   // Seção 5: Faturamento (Cobrança e NF)
   prazoVencimentoOpcao: z.string().default("15 dias corridos"),
   prazoVencimentoOutro: z.string().optional(),
+  usarPeriodoPadraoCte: z.boolean().default(true),
   janelaMedicaoInicio: z.coerce.number().min(1).max(31, "Dia de início inválido"),
   janelaMedicaoFim: z.coerce.number().min(1).max(31, "Dia de fim inválido"),
   periodoMedicaoInicio: z.coerce.number().min(1).max(31, "Dia de início inválido").default(1),
@@ -88,6 +90,7 @@ const formSchema = z.object({
   // Seção 6: Contrato
   elaborarContrato: z.boolean().default(true),
   documentacaoNecessaria: z.array(z.string()).default([]),
+  documentacaoOutros: z.string().optional(),
 
   // Seção 7: Emissão da ART
   necessitaArt: z.boolean().default(false),
@@ -140,6 +143,7 @@ const defaultFormValues: FormData = {
   cobrancaObservacoes: "",
   prazoVencimentoOpcao: "15 dias corridos",
   prazoVencimentoOutro: "",
+  usarPeriodoPadraoCte: true,
   janelaMedicaoInicio: 10,
   janelaMedicaoFim: 15,
   periodoMedicaoInicio: 1,
@@ -150,6 +154,7 @@ const defaultFormValues: FormData = {
   dataFimObra: "",
   elaborarContrato: true,
   documentacaoNecessaria: [],
+  documentacaoOutros: "",
   faturamentoMesmosDados: true,
   faturamentoRazaoSocial: "",
   faturamentoCnpj: "",
@@ -211,6 +216,8 @@ export default function Home() {
   const [loadingCNPJ, setLoadingCNPJ] = useState(false);
   const [cnpjError, setCnpjError] = useState("");
   const [cnpjInfoMessage, setCnpjInfoMessage] = useState("");
+  const [poDocumentFile, setPoDocumentFile] = useState<File | null>(null);
+  const [poDocumentError, setPoDocumentError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
   const [activeTab, setActiveTab] = useState<"cadastrais" | "contatos" | "faturamento" | "contrato" | "art" | "feedback">("cadastrais");
@@ -238,6 +245,28 @@ export default function Home() {
   const artMesmosDados = watch("artMesmosDados");
   const cnpjValue = watch("cnpj");
   const prazoVencimentoOpcao = watch("prazoVencimentoOpcao");
+  const usarPeriodoPadraoCte = watch("usarPeriodoPadraoCte");
+
+  const handlePoDocumentChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setPoDocumentError("");
+    const file = event.target.files?.[0] ?? null;
+    setPoDocumentFile(file);
+  };
+
+  const readFileAsBase64 = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result;
+        if (typeof result === "string") {
+          resolve(result.split(",")[1] || "");
+        } else {
+          reject(new Error("Erro ao ler o arquivo PO."));
+        }
+      };
+      reader.onerror = () => reject(new Error("Erro ao ler o arquivo PO."));
+      reader.readAsDataURL(file);
+    });
 
   // Prevent Hydration Errors
   useEffect(() => {
@@ -303,6 +332,8 @@ export default function Home() {
 
       const prazoSettings = buildOption(perfil?.prazo_vencimento_dias ?? null);
 
+      const documentacaoParseada = parseDocumentacaoNecessaria(perfil?.documentacao_necessaria);
+
       const resetValues = {
         ...defaultFormValues,
         preenchedorNome: cliente.preenchedor_nome ?? "",
@@ -334,6 +365,7 @@ export default function Home() {
         cobrancaObservacoes: perfil?.cobranca_observacoes ?? "",
         prazoVencimentoOpcao: prazoSettings.option,
         prazoVencimentoOutro: prazoSettings.other,
+        usarPeriodoPadraoCte: true,
         janelaMedicaoInicio: perfil?.janela_medicao_inicio ?? 10,
         janelaMedicaoFim: perfil?.janela_medicao_fim ?? 15,
         periodoMedicaoInicio: perfil?.periodo_medicao_inicio ?? 1,
@@ -343,7 +375,8 @@ export default function Home() {
         dataInicioObra: perfil?.data_inicio_obra ?? "",
         dataFimObra: perfil?.data_fim_obra ?? "",
         elaborarContrato: perfil?.elaborar_contrato ?? true,
-        documentacaoNecessaria: perfil?.documentacao_necessaria ?? [],
+        documentacaoNecessaria: documentacaoParseada.docsSelecionados,
+        documentacaoOutros: documentacaoParseada.outros,
         faturamentoMesmosDados: perfil?.faturamento_mesmos_dados ?? true,
         faturamentoRazaoSocial: perfil?.faturamento_razao_social ?? "",
         faturamentoCnpj: perfil?.faturamento_cnpj ? formatCNPJ(perfil.faturamento_cnpj) : "",
@@ -478,7 +511,7 @@ export default function Home() {
         setValue("contatoCobrancaEmail", data.email);
       }
 
-      setCnpjInfoMessage("Dados carregados com sucesso!");
+      setCnpjInfoMessage("Dados carregados com sucesso a partir da base pública da Receita Federal.");
     } catch (err: any) {
       setCnpjError(err.message || "CNPJ não encontrado ou erro de conexão. Preencha os campos manualmente.");
     } finally {
@@ -488,12 +521,33 @@ export default function Home() {
 
   // Parse billing days
   const getPrazoVencimentoDias = (data: FormData): number => {
-    if (data.prazoVencimentoOpcao === "Outra") {
-      const numeric = parseInt(data.prazoVencimentoOutro || "", 10);
-      return isNaN(numeric) ? 15 : numeric;
+    const numeric = parseInt(data.prazoVencimentoOutro || "", 10);
+    return isNaN(numeric) ? 15 : numeric;
+  };
+
+  const parseDocumentacaoNecessaria = (value: unknown) => {
+    const items = Array.isArray(value)
+      ? value.filter((item): item is string => typeof item === "string")
+      : [];
+
+    const docsSelecionados = items.filter((item) => docTypes.includes(item));
+    const outros = items.filter((item) => !docTypes.includes(item)).filter(Boolean);
+
+    return {
+      docsSelecionados,
+      outros: outros.join(" | ")
+    };
+  };
+
+  const buildDocumentacaoNecessariaPayload = (data: FormData) => {
+    const docs = [...(data.documentacaoNecessaria || [])];
+    const outros = (data.documentacaoOutros || "").trim();
+
+    if (outros) {
+      docs.push(outros);
     }
-    const val = parseInt(data.prazoVencimentoOpcao.split(" ")[0], 10);
-    return isNaN(val) ? 15 : val;
+
+    return docs;
   };
 
   // Handle submission
@@ -558,16 +612,16 @@ export default function Home() {
         cobranca_cidade_uf: data.cobrancaCidadeUf,
         cobranca_observacoes: data.cobrancaObservacoes,
         prazo_vencimento_dias: prazoDias,
-        janela_medicao_inicio: data.janelaMedicaoInicio,
-        janela_medicao_fim: data.janelaMedicaoFim,
-        periodo_medicao_inicio: data.periodoMedicaoInicio,
-        periodo_medicao_fim: data.periodoMedicaoFim,
+        janela_medicao_inicio: data.usarPeriodoPadraoCte ? 1 : data.janelaMedicaoInicio,
+        janela_medicao_fim: data.usarPeriodoPadraoCte ? 30 : data.janelaMedicaoFim,
+        periodo_medicao_inicio: data.usarPeriodoPadraoCte ? 1 : data.periodoMedicaoInicio,
+        periodo_medicao_fim: data.usarPeriodoPadraoCte ? 30 : data.periodoMedicaoFim,
         has_purchase_order: data.hasPurchaseOrder,
         po_document_url: data.poDocumentUrl,
         data_inicio_obra: data.dataInicioObra || null,
         data_fim_obra: data.dataFimObra || null,
         elaborar_contrato: data.elaborarContrato,
-        documentacao_necessaria: data.documentacaoNecessaria,
+        documentacao_necessaria: buildDocumentacaoNecessariaPayload(data),
         faturamento_mesmos_dados: data.faturamentoMesmosDados,
         faturamento_razao_social: data.faturamentoRazaoSocial,
         faturamento_cnpj: data.faturamentoCnpj ? data.faturamentoCnpj.replace(/\D/g, "") : null,
@@ -608,6 +662,55 @@ export default function Home() {
 
       if (billingErr) throw billingErr;
 
+      const docsToNotify = buildDocumentacaoNecessariaPayload(data);
+      const shouldSendDocWebhook = data.elaborarContrato && docsToNotify.length > 0;
+      if (shouldSendDocWebhook) {
+        try {
+          await fetch("https://n8n.cte.com.br/webhook/5f21b206-4569-4cfd-b54d-ffa4a5dfd546", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              cliente_id: clientId,
+              criado: true,
+              email: data.preenchedorEmail || data.contatoCobrancaEmail,
+              documentos: docsToNotify
+            })
+          });
+        } catch (webhookErr) {
+          console.warn("Falha ao enviar webhook de documentos:", webhookErr);
+        }
+      }
+
+      if (data.hasPurchaseOrder) {
+        if (!poDocumentFile) {
+          setPoDocumentError("Por favor, anexe o documento PO antes de enviar.");
+          setSubmitting(false);
+          return;
+        }
+
+        try {
+          const formData = new FormData();
+          formData.append("cliente_id", clientId);
+          formData.append("criado", "true");
+          formData.append("email", data.preenchedorEmail || data.contatoCobrancaEmail);
+          formData.append("documento", poDocumentFile, poDocumentFile.name);
+
+          const webhookResponse = await fetch("https://n8n.cte.com.br/webhook/d1be8620-ca3c-4258-8044-c465cb44d72f", {
+            method: "POST",
+            body: formData
+          });
+
+          if (!webhookResponse.ok) {
+            const webhookText = await webhookResponse.text();
+            console.warn("Falha ao enviar webhook do documento PO:", webhookResponse.status, webhookText);
+          }
+        } catch (webhookErr) {
+          console.warn("Falha ao enviar webhook do documento PO:", webhookErr);
+        }
+      }
+
       if (clientId) {
         localStorage.removeItem(`form_state_general_v3_${clientId}`);
       }
@@ -630,7 +733,7 @@ export default function Home() {
         "contatoCobrancaNome", "contatoCobrancaTelefone", "contatoCobrancaEmail"
       ];
     } else if (currentTab === "faturamento") {
-      fieldsToValidate = ["prazoVencimentoOpcao", "prazoVencimentoOutro", "janelaMedicaoInicio", "janelaMedicaoFim", "dataInicioObra", "dataFimObra"];
+      fieldsToValidate = ["prazoVencimentoOutro", "janelaMedicaoInicio", "janelaMedicaoFim", "dataInicioObra", "dataFimObra"];
     }
 
     const isValid = await trigger(fieldsToValidate);
@@ -642,21 +745,21 @@ export default function Home() {
 
   if (!mounted) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-900">
+        <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
       </div>
     );
   }
 
   if (submitSuccess) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 text-white px-4">
-        <div className="max-w-md w-full bg-slate-900/80 backdrop-blur-md p-8 rounded-3xl border border-indigo-500/20 shadow-2xl text-center space-y-6">
-          <div className="w-20 h-20 bg-indigo-500/10 border-2 border-indigo-500 rounded-full flex items-center justify-center mx-auto text-indigo-400">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-900 px-4">
+        <div className="max-w-md w-full bg-white border border-slate-200 p-8 rounded-3xl shadow-2xl shadow-slate-200/50 text-center space-y-6">
+          <div className="w-20 h-20 bg-emerald-100 border-2 border-emerald-500 rounded-full flex items-center justify-center mx-auto text-emerald-600">
             <CheckCircle2 className="w-12 h-12" />
           </div>
-          <h2 className="text-2xl font-bold tracking-tight">Obrigado!</h2>
-          <p className="text-slate-300">
+          <h2 className="text-2xl font-bold tracking-tight text-slate-900">Obrigado!</h2>
+          <p className="text-slate-700">
             Seus dados cadastrais e de faturamento foram coletados e enviados com sucesso.
           </p>
           <div className="pt-4">
@@ -665,7 +768,7 @@ export default function Home() {
                 setSubmitSuccess(false);
                 window.location.reload();
               }}
-              className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 transition duration-200 rounded-xl font-medium shadow-lg shadow-indigo-600/20 text-sm"
+              className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 transition duration-200 rounded-xl font-medium shadow-lg shadow-emerald-600/25 text-sm text-white"
             >
               Preencher Novamente
             </button>
@@ -677,63 +780,84 @@ export default function Home() {
 
   if (loadingClient) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white">
-        <Loader2 className="w-10 h-10 animate-spin text-indigo-500" />
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-900">
+        <Loader2 className="w-10 h-10 animate-spin text-emerald-600" />
       </div>
     );
   }
 
   if (pageBlockedReason) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white px-4">
-        <div className="max-w-xl w-full bg-slate-900/90 border border-rose-500/30 rounded-3xl p-8 text-center space-y-5 shadow-2xl shadow-rose-500/10">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-rose-500/10 text-rose-400">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-900 px-4">
+        <div className="max-w-xl w-full bg-white border border-rose-200 rounded-3xl p-8 text-center space-y-5 shadow-2xl shadow-rose-200/50">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-rose-100 text-rose-500">
             <Lock className="w-7 h-7" />
           </div>
-          <h2 className="text-2xl font-bold text-white">Acesso Bloqueado</h2>
-          <p className="text-slate-300 leading-relaxed">{pageBlockedReason}</p>
-          <p className="text-sm text-slate-500">Verifique o link enviado ou contate o responsável para receber o acesso correto.</p>
+          <h2 className="text-2xl font-bold text-slate-900">Acesso Bloqueado</h2>
+          <p className="text-slate-700 leading-relaxed">{pageBlockedReason}</p>
+          <p className="text-sm text-slate-600">Verifique o link enviado ou contate o responsável para receber o acesso correto.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 text-slate-100 flex flex-col font-sans pb-12">
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans pb-12">
       {/* Top Banner / Navbar */}
-      <header className="border-b border-slate-800/80 bg-slate-900/40 backdrop-blur-md sticky top-0 z-40 px-6 py-4 flex items-center justify-between">
+      <header className="border-b border-slate-200 bg-white sticky top-0 z-40 px-6 py-4 flex items-center justify-between shadow-sm">
         <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/20">
-            CTE
+          <div className="relative h-10 w-10 rounded-xl overflow-hidden border border-slate-200 bg-white shadow-sm">
+            <Image src="/cte-logo.png" alt="CTE" fill className="object-cover" />
           </div>
           <div>
-            <h1 className="text-sm font-semibold tracking-tight text-white uppercase">Dados Cadastrais & Faturamento</h1>
-            <p className="text-xs text-slate-400">Formulário de Captação</p>
+            <h1 className="text-sm font-semibold tracking-tight text-slate-900 uppercase">Centro de Tecnologia de Edificações</h1>
+            <p className="text-xs text-slate-600">Formulário de captação de dados</p>
           </div>
         </div>
         {savedLocallyTime && (
-          <span className="text-[10px] text-slate-500 bg-slate-800/50 px-2.5 py-1 rounded-full flex items-center gap-1.5 border border-slate-700/30">
+          <span className="text-[10px] text-slate-600 bg-slate-100 px-2.5 py-1 rounded-full flex items-center gap-1.5 border border-slate-200">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
             Autosalvo local às {savedLocallyTime}
           </span>
         )}
       </header>
 
+      <div className="max-w-6xl w-full mx-auto px-4 mt-8">
+        <div className="relative overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-xl">
+          <div className="absolute inset-0 opacity-70 saturate-150">
+            <Image src="/cte-hero.png" alt="CTE hero" fill className="object-cover" />
+            <div className="absolute inset-0 bg-white/70" />
+          </div>
+          <div className="relative px-6 py-10 md:px-12 md:py-14">
+            <div className="inline-flex items-center gap-3 rounded-full border border-emerald-300/50 bg-emerald-50 px-4 py-2 text-xs uppercase tracking-[0.2em] font-semibold text-emerald-700">
+              <div className="relative h-6 w-6 overflow-hidden rounded-md bg-white">
+                <Image src="/cte-logo.png" alt="CTE logo" fill className="object-cover" />
+              </div>
+              <span>Centro de Tecnologia de Edificações</span>
+            </div>
+            <h1 className="mt-6 text-3xl md:text-4xl font-semibold text-slate-900">Dados Cadastrais e Faturamento</h1>
+            <p className="mt-4 max-w-3xl text-sm md:text-base leading-7 text-slate-700">
+              Que prazer ter você como nosso cliente! Pensando em iniciar os procedimentos internos, gostaríamos de coletar algumas informações da sua empresa e do projeto para cadastrarmos em sistema.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Main Grid Layout */}
       <main className="max-w-6xl w-full mx-auto px-4 mt-8 flex-grow grid grid-cols-1 lg:grid-cols-4 gap-8">
         
         {/* Navigation Sidebar */}
         <aside className="lg:col-span-1 space-y-3">
-          <div className="sticky top-24 space-y-2 bg-slate-900/50 border border-slate-800/80 p-5 rounded-2xl backdrop-blur-md">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-4 px-2">Etapas</h2>
+          <div className="sticky top-24 space-y-2 bg-white border border-slate-200 p-5 rounded-2xl shadow-sm">
+            <h2 className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-4 px-2">Etapas</h2>
             
             <button
               type="button"
               onClick={() => setActiveTab("cadastrais")}
               className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition text-left text-sm ${
                 activeTab === "cadastrais"
-                  ? "bg-indigo-600/10 text-indigo-400 border border-indigo-500/30 font-medium"
-                  : "hover:bg-slate-800/40 text-slate-400"
+                  ? "bg-emerald-100 text-emerald-700 border border-emerald-200 font-medium"
+                  : "hover:bg-slate-100 text-slate-600"
               }`}
             >
               <Building2 className="w-4.5 h-4.5" />
@@ -745,8 +869,8 @@ export default function Home() {
               onClick={() => nextTab("cadastrais", "contatos")}
               className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition text-left text-sm ${
                 activeTab === "contatos"
-                  ? "bg-indigo-600/10 text-indigo-400 border border-indigo-500/30 font-medium"
-                  : "hover:bg-slate-800/40 text-slate-400"
+                  ? "bg-emerald-100 text-emerald-700 border border-emerald-200 font-medium"
+                  : "hover:bg-slate-100 text-slate-600"
               }`}
             >
               <User className="w-4.5 h-4.5" />
@@ -758,8 +882,8 @@ export default function Home() {
               onClick={() => nextTab("contatos", "faturamento")}
               className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition text-left text-sm ${
                 activeTab === "faturamento"
-                  ? "bg-indigo-600/10 text-indigo-400 border border-indigo-500/30 font-medium"
-                  : "hover:bg-slate-800/40 text-slate-400"
+                  ? "bg-emerald-100 text-emerald-700 border border-emerald-200 font-medium"
+                  : "hover:bg-slate-100 text-slate-600"
               }`}
             >
               <Calendar className="w-4.5 h-4.5" />
@@ -771,8 +895,8 @@ export default function Home() {
               onClick={() => nextTab("faturamento", "contrato")}
               className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition text-left text-sm ${
                 activeTab === "contrato"
-                  ? "bg-indigo-600/10 text-indigo-400 border border-indigo-500/30 font-medium"
-                  : "hover:bg-slate-800/40 text-slate-400"
+                  ? "bg-emerald-100 text-emerald-700 border border-emerald-200 font-medium"
+                  : "hover:bg-slate-100 text-slate-600"
               }`}
             >
               <FileText className="w-4.5 h-4.5" />
@@ -784,8 +908,8 @@ export default function Home() {
               onClick={() => nextTab("contrato", "art")}
               className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition text-left text-sm ${
                 activeTab === "art"
-                  ? "bg-indigo-600/10 text-indigo-400 border border-indigo-500/30 font-medium"
-                  : "hover:bg-slate-800/40 text-slate-400"
+                  ? "bg-emerald-100 text-emerald-700 border border-emerald-200 font-medium"
+                  : "hover:bg-slate-100 text-slate-600"
               }`}
             >
               <Sparkles className="w-4.5 h-4.5" />
@@ -797,8 +921,8 @@ export default function Home() {
               onClick={() => nextTab("art", "feedback")}
               className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition text-left text-sm ${
                 activeTab === "feedback"
-                  ? "bg-indigo-600/10 text-indigo-400 border border-indigo-500/30 font-medium"
-                  : "hover:bg-slate-800/40 text-slate-400"
+                  ? "bg-emerald-100 text-emerald-700 border border-emerald-200 font-medium"
+                  : "hover:bg-slate-100 text-slate-600"
               }`}
             >
               <CheckCircle2 className="w-4.5 h-4.5" />
@@ -813,32 +937,32 @@ export default function Home() {
             
             {/* 1. DADOS CADASTRAIS SECTION */}
             {activeTab === "cadastrais" && (
-              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-850 p-6 md:p-8 rounded-3xl space-y-6">
+              <div className="bg-white border border-slate-200 shadow-sm p-6 md:p-8 rounded-3xl space-y-6">
                 
                 {/* Seção 1: Identificação */}
                 <div className="space-y-4">
-                  <div className="flex items-center space-x-3 pb-3 border-b border-slate-800">
-                    <User className="text-indigo-400 w-5 h-5" />
-                    <h4 className="text-sm font-bold text-white uppercase tracking-wider">Seção 1: Identificação</h4>
+                  <div className="flex items-center space-x-3 pb-3 border-b border-slate-200">
+                    <User className="text-emerald-600 w-5 h-5" />
+                    <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Seção 1: Identificação</h4>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Informe seu Nome <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-semibold text-slate-700">Informe seu Nome <span className="text-rose-500">*</span></label>
                       <input
                         type="text"
                         placeholder="Insira seu nome completo"
                         {...register("preenchedorNome")}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition text-white"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-slate-900"
                       />
                       {errors.preenchedorNome && <p className="text-xs text-rose-500">{errors.preenchedorNome.message}</p>}
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Informe seu E-mail <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-semibold text-slate-700">Informe seu E-mail <span className="text-rose-500">*</span></label>
                       <input
                         type="email"
                         placeholder="Insira seu e-mail"
                         {...register("preenchedorEmail")}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition text-white"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-slate-900"
                       />
                       {errors.preenchedorEmail && <p className="text-xs text-rose-500">{errors.preenchedorEmail.message}</p>}
                     </div>
@@ -846,26 +970,26 @@ export default function Home() {
                 </div>
 
                 {/* Seção 2: Informações do Empreendimento */}
-                <div className="space-y-4 pt-6 border-t border-slate-800/60">
-                  <div className="flex items-center space-x-3 pb-3 border-b border-slate-800">
-                    <Building2 className="text-indigo-400 w-5 h-5" />
-                    <h4 className="text-sm font-bold text-white uppercase tracking-wider">Seção 2: Informações do Empreendimento</h4>
+                <div className="space-y-4 pt-6 border-t border-slate-200/60">
+                  <div className="flex items-center space-x-3 pb-3 border-b border-slate-200">
+                    <Building2 className="text-emerald-600 w-5 h-5" />
+                    <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Seção 2: Informações do Empreendimento</h4>
                   </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                     <div className="space-y-1.5 md:col-span-2">
-                      <label className="text-xs font-semibold text-slate-300">Nome do Empreendimento <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-semibold text-slate-700">Nome do Empreendimento <span className="text-rose-500">*</span></label>
                       <input
                         type="text"
                         placeholder="Ex: GLP GUARULHOS II"
                         {...register("nomeEmpreendimento")}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition text-white"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-slate-900"
                       />
                       {errors.nomeEmpreendimento && <p className="text-xs text-rose-500">{errors.nomeEmpreendimento.message}</p>}
                     </div>
 
                     <div className="space-y-1.5 col-span-1 md:col-span-2">
-                      <label className="text-xs font-semibold text-slate-300">CNPJ (xx.xxx.xxx/xxxx-xx) <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-semibold text-slate-700">CNPJ (xx.xxx.xxx/xxxx-xx) <span className="text-rose-500">*</span></label>
                       <div className="flex gap-2">
                         <div className="relative flex-grow">
                           <input
@@ -873,14 +997,14 @@ export default function Home() {
                             placeholder="00.000.000/0000-00"
                             {...register("cnpj")}
                             onChange={(e) => setValue("cnpj", formatCNPJ(e.target.value))}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition placeholder-slate-600 text-white font-mono"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition placeholder-slate-600 text-slate-900 font-mono"
                           />
                         </div>
                         <button
                           type="button"
                           onClick={handleCNPJSearch}
                           disabled={loadingCNPJ}
-                          className="px-4 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-800/50 transition rounded-xl text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-indigo-600/20"
+                          className="px-4 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800/50 transition rounded-xl text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-emerald-600/25"
                         >
                           {loadingCNPJ ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
@@ -901,116 +1025,116 @@ export default function Home() {
                     </div>
 
                     <div className="space-y-1.5 md:col-span-2">
-                      <label className="text-xs font-semibold text-slate-300">Razão Social <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-semibold text-slate-700">Razão Social <span className="text-rose-500">*</span></label>
                       <input
                         type="text"
                         {...register("razaoSocial")}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition text-white"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-slate-900"
                       />
                       {errors.razaoSocial && <p className="text-xs text-rose-500">{errors.razaoSocial.message}</p>}
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Inscrição Estadual</label>
+                      <label className="text-xs font-semibold text-slate-700">Inscrição Estadual</label>
                       <input
                         type="text"
                         {...register("inscricaoEstadual")}
                         placeholder="Caso seja ISENTO, deixe este campo em branco"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition text-white"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-slate-900"
                       />
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Nome Fantasia</label>
+                      <label className="text-xs font-semibold text-slate-700">Nome Fantasia</label>
                       <input
                         type="text"
                         {...register("nomeFantasia")}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition text-white"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-slate-900"
                       />
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">CEP <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-semibold text-slate-700">CEP <span className="text-rose-500">*</span></label>
                       <input
                         type="text"
                         placeholder="00000-000"
                         {...register("cep")}
                         onChange={(e) => setValue("cep", formatCEP(e.target.value))}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition text-white font-mono"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-slate-900 font-mono"
                       />
                       {errors.cep && <p className="text-xs text-rose-500">{errors.cep.message}</p>}
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Endereço Completo <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-semibold text-slate-700">Endereço Completo <span className="text-rose-500">*</span></label>
                       <input
                         type="text"
                         {...register("logradouro")}
                         placeholder="Rua, número, complemento, bairro"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition text-white"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-slate-900"
                       />
                       {errors.logradouro && <p className="text-xs text-rose-500">{errors.logradouro.message}</p>}
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Número <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-semibold text-slate-700">Número <span className="text-rose-500">*</span></label>
                       <input
                         type="text"
                         {...register("numero")}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition text-white"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-slate-900"
                       />
                       {errors.numero && <p className="text-xs text-rose-500">{errors.numero.message}</p>}
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Complemento</label>
+                      <label className="text-xs font-semibold text-slate-700">Complemento</label>
                       <input
                         type="text"
                         {...register("complemento")}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition text-white"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-slate-900"
                       />
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Bairro <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-semibold text-slate-700">Bairro <span className="text-rose-500">*</span></label>
                       <input
                         type="text"
                         {...register("bairro")}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition text-white"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-slate-900"
                       />
                       {errors.bairro && <p className="text-xs text-rose-500">{errors.bairro.message}</p>}
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Cidade/UF <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-semibold text-slate-700">Cidade/UF <span className="text-rose-500">*</span></label>
                       <input
                         type="text"
                         placeholder="Ex: SÃO PAULO/SP"
                         {...register("cidade")}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition text-white"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-slate-900"
                       />
                       {errors.cidade && <p className="text-xs text-rose-500">{errors.cidade.message}</p>}
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Estado (UF) <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-semibold text-slate-700">Estado (UF) <span className="text-rose-500">*</span></label>
                       <input
                         type="text"
                         placeholder="SP"
                         maxLength={2}
                         {...register("estado")}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition text-white uppercase"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-slate-900 uppercase"
                       />
                       {errors.estado && <p className="text-xs text-rose-500">{errors.estado.message}</p>}
                     </div>
 
                     <div className="space-y-1.5 md:col-span-2">
-                      <label className="text-xs font-semibold text-slate-300">Observação</label>
-                      <p className="text-[10px] text-slate-500">Caso ainda não tenha a SPE definida ou por algum motivo não possua os dados cadastrais do empreendimento, por favor utilize este campo para nos alertar dessas possíveis alterações.</p>
+                      <label className="text-xs font-semibold text-slate-700">Observação</label>
+                      <p className="text-[10px] text-slate-600">Caso ainda não tenha a SPE definida ou por algum motivo não possua os dados cadastrais do empreendimento, por favor utilize este campo para nos alertar dessas possíveis alterações.</p>
                       <textarea
                         rows={2}
                         {...register("observacaoGeral")}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition text-white"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition text-slate-900"
                       />
                     </div>
                   </div>
@@ -1020,7 +1144,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => nextTab("cadastrais", "contatos")}
-                    className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 transition duration-200 rounded-xl font-medium shadow-lg shadow-indigo-600/25 text-sm"
+                    className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 transition duration-200 rounded-xl font-medium shadow-lg shadow-emerald-600/25 text-sm"
                   >
                     Próxima Etapa: Contatos Responsáveis
                   </button>
@@ -1030,70 +1154,70 @@ export default function Home() {
 
             {/* 2. CONTATOS RESPONSÁVEIS SECTION */}
             {activeTab === "contatos" && (
-              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-850 p-6 md:p-8 rounded-3xl space-y-6">
+              <div className="bg-white border border-slate-200 shadow-sm p-6 md:p-8 rounded-3xl space-y-6">
                 
                 {/* Seção 3: Contato Técnico */}
                 <div className="space-y-4">
-                  <div className="flex items-center space-x-3 pb-3 border-b border-slate-800">
-                    <Briefcase className="text-indigo-400 w-5 h-5" />
-                    <h4 className="text-sm font-bold text-white uppercase tracking-wider">Seção 3: Contato Técnico</h4>
+                  <div className="flex items-center space-x-3 pb-3 border-b border-slate-200">
+                    <Briefcase className="text-emerald-600 w-5 h-5" />
+                    <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Seção 3: Contato Técnico</h4>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-950/20 p-5 rounded-2xl border border-slate-850/50">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-5 rounded-2xl border border-slate-200">
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Nome do Contato Técnico <span className="text-rose-500">*</span></label>
-                      <input type="text" {...register("contatoTecnicoNome")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                      <label className="text-xs font-semibold text-slate-700">Nome do Contato Técnico <span className="text-rose-500">*</span></label>
+                      <input type="text" {...register("contatoTecnicoNome")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                       {errors.contatoTecnicoNome && <p className="text-xs text-rose-500">{errors.contatoTecnicoNome.message}</p>}
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Cargo do Contato Técnico <span className="text-rose-500">*</span></label>
-                      <input type="text" placeholder="Ex: Gerente de Engenharia" {...register("contatoTecnicoCargo")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                      <label className="text-xs font-semibold text-slate-700">Cargo do Contato Técnico <span className="text-rose-500">*</span></label>
+                      <input type="text" placeholder="Ex: Gerente de Engenharia" {...register("contatoTecnicoCargo")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                       {errors.contatoTecnicoCargo && <p className="text-xs text-rose-500">{errors.contatoTecnicoCargo.message}</p>}
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Telefone do Contato Técnico <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-semibold text-slate-700">Telefone do Contato Técnico <span className="text-rose-500">*</span></label>
                       <input
                         type="text"
                         placeholder="(00) 00000-0000"
                         {...register("contatoTecnicoTelefone")}
                         onChange={(e) => setValue("contatoTecnicoTelefone", formatPhone(e.target.value))}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white font-mono"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 font-mono"
                       />
                       {errors.contatoTecnicoTelefone && <p className="text-xs text-rose-500">{errors.contatoTecnicoTelefone.message}</p>}
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">E-mail do Contato Técnico <span className="text-rose-500">*</span></label>
-                      <input type="email" {...register("contatoTecnicoEmail")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                      <label className="text-xs font-semibold text-slate-700">E-mail do Contato Técnico <span className="text-rose-500">*</span></label>
+                      <input type="email" {...register("contatoTecnicoEmail")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                       {errors.contatoTecnicoEmail && <p className="text-xs text-rose-500">{errors.contatoTecnicoEmail.message}</p>}
                     </div>
                   </div>
                 </div>
 
                 {/* Seção 4: Cobrança (Contato) */}
-                <div className="space-y-4 pt-6 border-t border-slate-800/50">
-                  <div className="flex items-center space-x-3 pb-3 border-b border-slate-800">
-                    <Mail className="text-indigo-400 w-5 h-5" />
-                    <h4 className="text-sm font-bold text-white uppercase tracking-wider">Seção 4: Cobrança (Contatos)</h4>
+                <div className="space-y-4 pt-6 border-t border-slate-200/50">
+                  <div className="flex items-center space-x-3 pb-3 border-b border-slate-200">
+                    <Mail className="text-emerald-600 w-5 h-5" />
+                    <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Seção 4: Cobrança (Contatos)</h4>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-950/20 p-5 rounded-2xl border border-slate-850/50">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-5 rounded-2xl border border-slate-200">
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Nome do Responsável para assuntos de cobrança <span className="text-rose-500">*</span></label>
-                      <input type="text" {...register("contatoCobrancaNome")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                      <label className="text-xs font-semibold text-slate-700">Nome do Responsável para assuntos de cobrança <span className="text-rose-500">*</span></label>
+                      <input type="text" {...register("contatoCobrancaNome")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                       {errors.contatoCobrancaNome && <p className="text-xs text-rose-500">{errors.contatoCobrancaNome.message}</p>}
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Telefone para Cobrança <span className="text-rose-500">*</span></label>
+                      <label className="text-xs font-semibold text-slate-700">Telefone para Cobrança <span className="text-rose-500">*</span></label>
                       <input
                         type="text"
                         placeholder="(00) 00000-0000"
                         {...register("contatoCobrancaTelefone")}
                         onChange={(e) => setValue("contatoCobrancaTelefone", formatPhone(e.target.value))}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white font-mono"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 font-mono"
                       />
                       {errors.contatoCobrancaTelefone && <p className="text-xs text-rose-500">{errors.contatoCobrancaTelefone.message}</p>}
                     </div>
                     <div className="space-y-1.5 md:col-span-2">
-                      <label className="text-xs font-semibold text-slate-300">E-mail para Cobrança <span className="text-rose-500">*</span></label>
-                      <input type="email" {...register("contatoCobrancaEmail")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                      <label className="text-xs font-semibold text-slate-700">E-mail para Cobrança <span className="text-rose-500">*</span></label>
+                      <input type="email" {...register("contatoCobrancaEmail")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                       {errors.contatoCobrancaEmail && <p className="text-xs text-rose-500">{errors.contatoCobrancaEmail.message}</p>}
                     </div>
                   </div>
@@ -1103,14 +1227,14 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setActiveTab("cadastrais")}
-                    className="px-6 py-3 border border-slate-800 hover:bg-slate-800/40 transition rounded-xl text-slate-300 text-sm font-medium"
+                    className="px-6 py-3 border border-slate-200 hover:bg-slate-100 transition rounded-xl text-slate-700 text-sm font-medium"
                   >
                     Voltar
                   </button>
                   <button
                     type="button"
                     onClick={() => nextTab("contatos", "faturamento")}
-                    className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 transition duration-200 rounded-xl font-medium shadow-lg shadow-indigo-600/25 text-sm"
+                    className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 transition duration-200 rounded-xl font-medium shadow-lg shadow-emerald-600/25 text-sm"
                   >
                     Próxima Etapa: Faturamento
                   </button>
@@ -1120,34 +1244,34 @@ export default function Home() {
 
             {/* 3. DADOS DE FATURAMENTO SECTION */}
             {activeTab === "faturamento" && (
-              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-850 p-6 md:p-8 rounded-3xl space-y-6">
+              <div className="bg-white border border-slate-200 shadow-sm p-6 md:p-8 rounded-3xl space-y-6">
                 
                 {/* Seção 4: Cobrança (Endereço e Observações) */}
                 <div className="space-y-4">
-                  <div className="flex items-center space-x-3 pb-3 border-b border-slate-800">
-                    <MapPin className="text-indigo-400 w-5 h-5" />
-                    <h4 className="text-sm font-bold text-white uppercase tracking-wider">Seção 4: Cobrança (Dados de Endereço)</h4>
+                  <div className="flex items-center space-x-3 pb-3 border-b border-slate-200">
+                    <MapPin className="text-emerald-600 w-5 h-5" />
+                    <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Seção 4: Cobrança (Dados de Endereço)</h4>
                   </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="col-span-1 md:col-span-2 flex items-center justify-between">
-                      <span className="text-xs font-semibold text-slate-300">O endereço para emissão da cobrança será o mesmo da empresa? *</span>
+                      <span className="text-xs font-semibold text-slate-700">O endereço para emissão da cobrança será o mesmo da empresa? *</span>
                       <div className="flex items-center space-x-4">
-                        <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                        <label className="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
                           <input
                             type="radio"
                             checked={cobrancaMesmoEndereco === true}
                             onChange={() => setValue("cobrancaMesmoEndereco", true)}
-                            className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                            className="text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200"
                           />
                           <span>Sim</span>
                         </label>
-                        <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                        <label className="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
                           <input
                             type="radio"
                             checked={cobrancaMesmoEndereco === false}
                             onChange={() => setValue("cobrancaMesmoEndereco", false)}
-                            className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                            className="text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200"
                           />
                           <span>Não</span>
                         </label>
@@ -1155,133 +1279,124 @@ export default function Home() {
                     </div>
 
                     {!cobrancaMesmoEndereco && (
-                      <div className="col-span-1 md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-900/30 p-5 rounded-2xl border border-slate-850">
+                      <div className="col-span-1 md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-5 rounded-2xl border border-slate-200">
                         <div className="space-y-1.5 md:col-span-2">
-                          <label className="text-xs font-semibold text-slate-300">Endereço Completo para Cobrança</label>
-                          <input type="text" {...register("cobrancaEnderecoCompleto")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                          <label className="text-xs font-semibold text-slate-700">Endereço Completo para Cobrança</label>
+                          <input type="text" {...register("cobrancaEnderecoCompleto")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                         </div>
                         <div className="space-y-1.5">
-                          <label className="text-xs font-semibold text-slate-300">CEP para cobrança</label>
+                          <label className="text-xs font-semibold text-slate-700">CEP para cobrança</label>
                           <input
                             type="text"
                             placeholder="00000-000"
                             {...register("cobrancaCep")}
                             onChange={(e) => setValue("cobrancaCep", formatCEP(e.target.value))}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white font-mono"
+                            className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 font-mono"
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <label className="text-xs font-semibold text-slate-300">Cidade/UF Cobrança</label>
-                          <input type="text" placeholder="Ex: SÃO PAULO/SP" {...register("cobrancaCidadeUf")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                          <label className="text-xs font-semibold text-slate-700">Cidade/UF Cobrança</label>
+                          <input type="text" placeholder="Ex: SÃO PAULO/SP" {...register("cobrancaCidadeUf")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                         </div>
                       </div>
                     )}
 
                     <div className="col-span-1 md:col-span-2 space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Observações Adicionais de Cobrança</label>
+                      <label className="text-xs font-semibold text-slate-700">Observações Adicionais de Cobrança</label>
                       <textarea
                         rows={2}
                         placeholder="Utilize esse espaço para inserir informações adicionais sobre cobrança (ex: CNO)..."
                         {...register("cobrancaObservacoes")}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white"
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900"
                       />
                     </div>
                   </div>
                 </div>
 
                 {/* Seção 5: Faturamento */}
-                <div className="space-y-4 pt-6 border-t border-slate-800/60">
-                  <div className="flex items-center space-x-3 pb-3 border-b border-slate-800">
-                    <Calendar className="text-indigo-400 w-5 h-5" />
-                    <h4 className="text-sm font-bold text-white uppercase tracking-wider">Seção 5: Faturamento (NF)</h4>
+                <div className="space-y-4 pt-6 border-t border-slate-200/60">
+                  <div className="flex items-center space-x-3 pb-3 border-b border-slate-200">
+                    <Calendar className="text-emerald-600 w-5 h-5" />
+                    <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Seção 5: Faturamento (NF)</h4>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                     <div className="space-y-2 col-span-1 md:col-span-2">
-                      <label className="text-xs font-semibold text-slate-300 block">Prazo para vencimento da cobrança? <span className="text-rose-500">*</span></label>
-                      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                        {["10 dias corridos", "15 dias corridos", "20 dias corridos", "30 dias corridos", "Outra"].map((opt) => (
-                          <label key={opt} className={`flex items-center justify-center p-3 rounded-xl border text-xs font-semibold cursor-pointer transition ${
-                            prazoVencimentoOpcao === opt
-                              ? "bg-indigo-600/10 border-indigo-500 text-indigo-400"
-                              : "bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700"
-                          }`}>
-                            <input
-                              type="radio"
-                              value={opt}
-                              checked={prazoVencimentoOpcao === opt}
-                              onChange={() => setValue("prazoVencimentoOpcao", opt)}
-                              className="sr-only"
-                            />
-                            <span>{opt}</span>
-                          </label>
-                        ))}
-                      </div>
-                      
-                      {prazoVencimentoOpcao === "Outra" && (
-                        <div className="mt-2 space-y-1">
+                      <label className="text-xs font-semibold text-slate-700 block">Prazo para vencimento da cobrança (dias corridos) <span className="text-rose-500">*</span></label>
+                      <input
+                        type="number"
+                        min="1"
+                        placeholder="Ex: 15"
+                        {...register("prazoVencimentoOutro")}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      />
+                      <p className="text-xs text-slate-600">Informe a quantidade de dias corridos para o vencimento da cobrança.</p>
+                    </div>
+
+                    <div className="space-y-1.5 col-span-1 md:col-span-2">
+                      <label className="text-xs font-semibold text-slate-700">Janela de Recebimento de Medições <span className="text-rose-500">*</span></label>
+                      <div className="flex items-center gap-3 mt-2">
+                        <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
                           <input
-                            type="number"
-                            placeholder="Insira a quantidade de dias (ex: 45)"
-                            {...register("prazoVencimentoOutro")}
-                            className="w-full bg-slate-950 border border-indigo-500/30 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            type="checkbox"
+                            checked={usarPeriodoPadraoCte === true}
+                            onChange={() => setValue("usarPeriodoPadraoCte", !usarPeriodoPadraoCte)}
+                            className="rounded text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200"
                           />
+                          <span>Seguir padrão da CTE (1 a 30)</span>
+                        </label>
+                      </div>
+                      {!usarPeriodoPadraoCte && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-slate-700">Data de Início</label>
+                            <input
+                              type="number"
+                              placeholder="Dia Início"
+                              {...register("janelaMedicaoInicio")}
+                              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-semibold text-slate-700">Data de Fim</label>
+                            <input
+                              type="number"
+                              placeholder="Dia Fim"
+                              {...register("janelaMedicaoFim")}
+                              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900"
+                            />
+                          </div>
+                        </div>
+                      )}
+                      {usarPeriodoPadraoCte && (
+                        <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                          Os campos serão preenchidos automaticamente com o padrão da CTE: 1 a 30.
                         </div>
                       )}
                     </div>
 
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Janela de Recebimento de Medições <span className="text-rose-500">*</span></label>
-                      <div className="grid grid-cols-2 gap-3">
-                        <input
-                          type="number"
-                          placeholder="Dia Início (Ex: 10)"
-                          {...register("janelaMedicaoInicio")}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white"
-                        />
-                        <input
-                          type="number"
-                          placeholder="Dia Fim (Ex: 15)"
-                          {...register("janelaMedicaoFim")}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Período de Medição Padrão</label>
-                      <div className="grid grid-cols-2 gap-3">
-                        <input
-                          type="number"
-                          {...register("periodoMedicaoInicio")}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white"
-                        />
-                        <input
-                          type="number"
-                          {...register("periodoMedicaoFim")}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Possui Purchase Order (PO)?</label>
+                      <label className="text-xs font-semibold text-slate-700">Possui Purchase Order (PO)?</label>
                       <div className="flex items-center space-x-4 mt-2">
-                        <label className="flex items-center space-x-2 text-sm text-slate-300 cursor-pointer">
+                        <label className="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
                           <input
                             type="radio"
                             checked={hasPO === true}
                             onChange={() => setValue("hasPurchaseOrder", true)}
-                            className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                            className="text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200"
                           />
                           <span>Sim</span>
                         </label>
-                        <label className="flex items-center space-x-2 text-sm text-slate-300 cursor-pointer">
+                        <label className="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
                           <input
                             type="radio"
                             checked={hasPO === false}
-                            onChange={() => setValue("hasPurchaseOrder", false)}
-                            className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                            onChange={() => {
+                              setValue("hasPurchaseOrder", false);
+                              setPoDocumentFile(null);
+                              setPoDocumentError("");
+                            }}
+                            className="text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200"
                           />
                           <span>Não</span>
                         </label>
@@ -1289,57 +1404,44 @@ export default function Home() {
                     </div>
 
                     {hasPO && (
-                      <div className="col-span-1 md:col-span-2 border border-dashed border-indigo-500/20 bg-indigo-950/10 p-5 rounded-2xl space-y-2">
-                        <label className="text-xs font-semibold text-indigo-400 flex items-center gap-1.5">
-                          <Upload className="w-4 h-4" /> Anexar Documento PO
+                      <div className="col-span-1 md:col-span-2 border border-dashed border-emerald-200 bg-slate-50 p-5 rounded-2xl space-y-3">
+                        <label className="text-xs font-semibold text-emerald-600 flex items-center gap-1.5">
+                          <Upload className="w-4 h-4" /> Anexar Documento PO <span className="text-rose-500">*</span>
                         </label>
                         <input
-                          type="text"
-                          placeholder="Link ou caminho do documento PO (ou anexe após confirmação)"
-                          {...register("poDocumentUrl")}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white"
+                          type="file"
+                          accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                          onChange={handlePoDocumentChange}
+                          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900"
                         />
+                        {poDocumentFile && (
+                          <p className="text-xs text-slate-600">Arquivo selecionado: {poDocumentFile.name}</p>
+                        )}
+                        {poDocumentError && <p className="text-xs text-rose-500">{poDocumentError}</p>}
+                        <p className="text-[10px] text-slate-500">Obrigatório quando o PO for necessário. Caso não tenha PO, apenas selecione "Não" na pergunta anterior.</p>
                       </div>
                     )}
 
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Data de Início da Obra <span className="text-rose-500">*</span></label>
-                      <input
-                        type="date"
-                        {...register("dataInicioObra")}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white font-mono"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-300">Data de Término da Obra <span className="text-rose-500">*</span></label>
-                      <input
-                        type="date"
-                        {...register("dataFimObra")}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white font-mono"
-                      />
-                    </div>
-
                     {/* Faturamento com dados diferentes? */}
-                    <div className="col-span-1 md:col-span-2 border-t border-slate-800/60 pt-5 space-y-4">
+                    <div className="col-span-1 md:col-span-2 border-t border-slate-200/60 pt-5 space-y-4">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-slate-300">Os dados cadastrais a constar na Nota Fiscal serão os mesmos da empresa? *</span>
+                        <span className="text-xs font-semibold text-slate-700">Os dados cadastrais a constar na Nota Fiscal serão os mesmos da empresa? *</span>
                         <div className="flex items-center space-x-4">
-                          <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                          <label className="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
                             <input
                               type="radio"
                               checked={faturamentoMesmosDados === true}
                               onChange={() => setValue("faturamentoMesmosDados", true)}
-                              className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                              className="text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200"
                             />
                             <span>Sim</span>
                           </label>
-                          <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                          <label className="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
                             <input
                               type="radio"
                               checked={faturamentoMesmosDados === false}
                               onChange={() => setValue("faturamentoMesmosDados", false)}
-                              className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                              className="text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200"
                             />
                             <span>Não</span>
                           </label>
@@ -1347,53 +1449,53 @@ export default function Home() {
                       </div>
 
                       {!faturamentoMesmosDados && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-900/30 p-5 rounded-2xl border border-slate-850">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-5 rounded-2xl border border-slate-200">
                           <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-300">Razão Social para Faturamento</label>
-                            <input type="text" {...register("faturamentoRazaoSocial")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                            <label className="text-xs font-semibold text-slate-700">Razão Social para Faturamento</label>
+                            <input type="text" {...register("faturamentoRazaoSocial")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-300">CNPJ de Faturamento</label>
+                            <label className="text-xs font-semibold text-slate-700">CNPJ de Faturamento</label>
                             <input
                               type="text"
                               placeholder="00.000.000/0000-00"
                               {...register("faturamentoCnpj")}
                               onChange={(e) => setValue("faturamentoCnpj", formatCNPJ(e.target.value))}
-                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white font-mono"
+                              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 font-mono"
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-300">Inscrição Estadual Faturamento</label>
-                            <input type="text" placeholder="Caso seja ISENTO, deixe este campo em branco" {...register("faturamentoInscricaoEstadual")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                            <label className="text-xs font-semibold text-slate-700">Inscrição Estadual Faturamento</label>
+                            <input type="text" placeholder="Caso seja ISENTO, deixe este campo em branco" {...register("faturamentoInscricaoEstadual")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-300">CEP Faturamento</label>
+                            <label className="text-xs font-semibold text-slate-700">CEP Faturamento</label>
                             <input
                               type="text"
                               placeholder="00000-000"
                               {...register("faturamentoCep")}
                               onChange={(e) => setValue("faturamentoCep", formatCEP(e.target.value))}
-                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white font-mono"
+                              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 font-mono"
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-300">Cidade/UF Faturamento</label>
-                            <input type="text" placeholder="Ex: SÃO PAULO/SP" {...register("faturamentoCidadeUf")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                            <label className="text-xs font-semibold text-slate-700">Cidade/UF Faturamento</label>
+                            <input type="text" placeholder="Ex: SÃO PAULO/SP" {...register("faturamentoCidadeUf")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                           </div>
                           <div className="space-y-1.5 md:col-span-2">
-                            <label className="text-xs font-semibold text-slate-300">Endereço de Faturamento</label>
-                            <input type="text" {...register("faturamentoEndereco")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                            <label className="text-xs font-semibold text-slate-700">Endereço de Faturamento</label>
+                            <input type="text" {...register("faturamentoEndereco")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                           </div>
                         </div>
                       )}
 
                       <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-slate-300">Informações adicionais na descrição da Nota Fiscal</label>
+                        <label className="text-xs font-semibold text-slate-700">Informações adicionais na descrição da Nota Fiscal</label>
                         <textarea
                           rows={2}
                           placeholder="Número do Pedido, CNO, Dados Bancários, Endereço da Obra..."
                           {...register("faturamentoObsNf")}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white"
+                          className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900"
                         />
                       </div>
                     </div>
@@ -1404,14 +1506,14 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setActiveTab("contatos")}
-                    className="px-6 py-3 border border-slate-800 hover:bg-slate-800/40 transition rounded-xl text-slate-300 text-sm font-medium"
+                    className="px-6 py-3 border border-slate-200 hover:bg-slate-100 transition rounded-xl text-slate-700 text-sm font-medium"
                   >
                     Voltar
                   </button>
                   <button
                     type="button"
                     onClick={() => nextTab("faturamento", "contrato")}
-                    className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 transition duration-200 rounded-xl font-medium shadow-lg shadow-indigo-600/25 text-sm"
+                    className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 transition duration-200 rounded-xl font-medium shadow-lg shadow-emerald-600/25 text-sm"
                   >
                     Próxima Etapa: Contrato
                   </button>
@@ -1421,81 +1523,94 @@ export default function Home() {
 
             {/* 4. CONTRATO & DOCUMENTOS SECTION */}
             {activeTab === "contrato" && (
-              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-850 p-6 md:p-8 rounded-3xl space-y-6">
-                <div className="flex items-center space-x-3 pb-4 border-b border-slate-800">
-                  <FileText className="text-indigo-400 w-6 h-6" />
+              <div className="bg-white border border-slate-200 shadow-sm p-6 md:p-8 rounded-3xl space-y-6">
+                <div className="flex items-center space-x-3 pb-4 border-b border-slate-200">
+                  <FileText className="text-emerald-600 w-6 h-6" />
                   <div>
-                    <h3 className="text-lg font-bold text-white">Seção 6: Contrato de Prestação de Serviços</h3>
-                    <p className="text-xs text-slate-400">Indique os trâmites contratuais e envie os documentos solicitados</p>
+                    <h3 className="text-lg font-bold text-slate-900">Seção 6: Contrato de Prestação de Serviços</h3>
+                    <p className="text-xs text-slate-600">Indique os trâmites contratuais e envie os documentos solicitados</p>
                   </div>
                 </div>
 
                 <div className="space-y-5">
                   <div className="space-y-2">
-                    <label className="text-sm font-semibold text-slate-300 block">Para o projeto fechado com o CTE será elaborado um contrato de prestação de serviços? *</label>
-                    <p className="text-xs text-slate-500">Gostaríamos de informar que, na ausência de um contrato formalizado entre as partes, seguiremos com as condições comerciais previstas na proposta comercial que lhe foi apresentada.</p>
+                    <label className="text-sm font-semibold text-slate-700 block">Para o projeto fechado com o CTE será elaborado um contrato de prestação de serviços? *</label>
+                    <p className="text-xs text-slate-600">Gostaríamos de informar que, na ausência de um contrato formalizado entre as partes, seguiremos com as condições comerciais previstas na proposta comercial que lhe foi apresentada.</p>
                     <div className="flex items-center space-x-4 mt-2">
-                      <label className="flex items-center space-x-2 text-sm text-slate-300 cursor-pointer">
+                      <label className="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
                         <input
                           type="radio"
                           value="true"
                           checked={watch("elaborarContrato") === true}
                           onChange={() => setValue("elaborarContrato", true)}
-                          className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                          className="text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200"
                         />
                         <span>Sim</span>
                       </label>
-                      <label className="flex items-center space-x-2 text-sm text-slate-300 cursor-pointer">
+                      <label className="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
                         <input
                           type="radio"
                           value="false"
                           checked={watch("elaborarContrato") === false}
                           onChange={() => setValue("elaborarContrato", false)}
-                          className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                          className="text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200"
                         />
                         <span>Não, seguiremos com a proposta comercial</span>
                       </label>
                     </div>
                   </div>
 
-                  <div className="space-y-3 pt-4 border-t border-slate-800/65">
-                    <label className="text-sm font-semibold text-slate-300 block">Gostaria que enviássemos algum documento para os trâmites jurídicos ou cadastrais da sua empresa?</label>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-                      {docTypes.map((doc) => (
-                        <label key={doc} className="flex items-start space-x-3 text-xs text-slate-400 cursor-pointer hover:text-slate-200 transition">
-                          <input
-                            type="checkbox"
-                            value={doc}
-                            checked={(watch("documentacaoNecessaria") || []).includes(doc)}
-                            onChange={(e) => {
-                              const currentDocs = watch("documentacaoNecessaria") || [];
-                              if (e.target.checked) {
-                                setValue("documentacaoNecessaria", [...currentDocs, doc]);
-                              } else {
-                                setValue("documentacaoNecessaria", currentDocs.filter(d => d !== doc));
-                              }
-                            }}
-                            className="rounded text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800 mt-0.5"
-                          />
-                          <span>{doc}</span>
-                        </label>
-                      ))}
+                  {watch("elaborarContrato") === true && (
+                    <div className="space-y-3 pt-4 border-t border-slate-200/65">
+                      <label className="text-sm font-semibold text-slate-700 block">Gostaria que enviássemos algum documento para os trâmites jurídicos ou cadastrais da sua empresa?</label>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                        {docTypes.map((doc) => (
+                          <label key={doc} className="flex items-start space-x-3 text-xs text-slate-600 cursor-pointer hover:text-slate-900 transition">
+                            <input
+                              type="checkbox"
+                              value={doc}
+                              checked={(watch("documentacaoNecessaria") || []).includes(doc)}
+                              onChange={(e) => {
+                                const currentDocs = watch("documentacaoNecessaria") || [];
+                                if (e.target.checked) {
+                                  setValue("documentacaoNecessaria", [...currentDocs, doc]);
+                                } else {
+                                  setValue("documentacaoNecessaria", currentDocs.filter(d => d !== doc));
+                                }
+                              }}
+                              className="rounded text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200 mt-0.5"
+                            />
+                            <span>{doc}</span>
+                          </label>
+                        ))}
+                      </div>
+
+                      <div className="mt-4">
+                        <label className="text-sm font-semibold text-slate-700 block">Outros documentos (descreva)</label>
+                        <input
+                          type="text"
+                          value={watch("documentacaoOutros") || ""}
+                          onChange={(e) => setValue("documentacaoOutros", e.target.value)}
+                          placeholder="Descreva outros documentos a serem enviados"
+                          className="mt-2 w-full rounded bg-slate-50 border border-slate-200 text-sm px-3 py-2 text-slate-900"
+                        />
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
                 <div className="pt-6 flex justify-between">
                   <button
                     type="button"
                     onClick={() => setActiveTab("faturamento")}
-                    className="px-6 py-3 border border-slate-800 hover:bg-slate-800/40 transition rounded-xl text-slate-300 text-sm font-medium"
+                    className="px-6 py-3 border border-slate-200 hover:bg-slate-100 transition rounded-xl text-slate-700 text-sm font-medium"
                   >
                     Voltar
                   </button>
                   <button
                     type="button"
                     onClick={() => nextTab("contrato", "art")}
-                    className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 transition duration-200 rounded-xl font-medium shadow-lg shadow-indigo-600/25 text-sm"
+                    className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 transition duration-200 rounded-xl font-medium shadow-lg shadow-emerald-600/25 text-sm"
                   >
                     Próxima Etapa: ART
                   </button>
@@ -1505,36 +1620,36 @@ export default function Home() {
 
             {/* 5. EMISSÃO DE ART SECTION */}
             {activeTab === "art" && (
-              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-850 p-6 md:p-8 rounded-3xl space-y-6">
-                <div className="flex items-center space-x-3 pb-4 border-b border-slate-800">
-                  <Sparkles className="text-indigo-400 w-6 h-6" />
+              <div className="bg-white border border-slate-200 shadow-sm p-6 md:p-8 rounded-3xl space-y-6">
+                <div className="flex items-center space-x-3 pb-4 border-b border-slate-200">
+                  <Sparkles className="text-emerald-600 w-6 h-6" />
                   <div>
-                    <h3 className="text-lg font-bold text-white">Seção 7: Emissão da ART</h3>
-                    <p className="text-xs text-slate-400">Coleta de dados da obra para emissão da Anotação de Responsabilidade Técnica</p>
+                    <h3 className="text-lg font-bold text-slate-900">Seção 7: Emissão da ART</h3>
+                    <p className="text-xs text-slate-600">Coleta de dados da obra para emissão da Anotação de Responsabilidade Técnica</p>
                   </div>
                 </div>
 
                 <div className="space-y-6">
                   <div className="space-y-2">
-                    <label className="text-sm font-semibold text-slate-300 block">Gostaríamos de confirmar se será necessária a emissão de Anotação de Responsabilidade Técnica (ART) para o serviço que foi contratado. *</label>
+                    <label className="text-sm font-semibold text-slate-700 block">Gostaríamos de confirmar se será necessária a emissão de Anotação de Responsabilidade Técnica (ART) para o serviço que foi contratado. *</label>
                     <div className="flex items-center space-x-4 mt-2">
-                      <label className="flex items-center space-x-2 text-sm text-slate-300 cursor-pointer">
+                      <label className="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
                         <input
                           type="radio"
                           value="true"
                           checked={necessitaArt === true}
                           onChange={() => setValue("necessitaArt", true)}
-                          className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                          className="text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200"
                         />
                         <span>Sim</span>
                       </label>
-                      <label className="flex items-center space-x-2 text-sm text-slate-300 cursor-pointer">
+                      <label className="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
                         <input
                           type="radio"
                           value="false"
                           checked={necessitaArt === false}
                           onChange={() => setValue("necessitaArt", false)}
-                          className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                          className="text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200"
                         />
                         <span>Não</span>
                       </label>
@@ -1542,25 +1657,25 @@ export default function Home() {
                   </div>
 
                   {necessitaArt && (
-                    <div className="space-y-6 border-t border-slate-800/60 pt-5">
+                    <div className="space-y-6 border-t border-slate-200/60 pt-5">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-slate-300">Os dados da empresa para emissão da ART serão os mesmos? *</span>
+                        <span className="text-xs font-semibold text-slate-700">Os dados da empresa para emissão da ART serão os mesmos? *</span>
                         <div className="flex items-center space-x-4">
-                          <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                          <label className="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
                             <input
                               type="radio"
                               checked={artMesmosDados === true}
                               onChange={() => setValue("artMesmosDados", true)}
-                              className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                              className="text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200"
                             />
                             <span>Sim</span>
                           </label>
-                          <label className="flex items-center space-x-2 text-xs text-slate-300 cursor-pointer">
+                          <label className="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
                             <input
                               type="radio"
                               checked={artMesmosDados === false}
                               onChange={() => setValue("artMesmosDados", false)}
-                              className="text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800"
+                              className="text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200"
                             />
                             <span>Não</span>
                           </label>
@@ -1568,82 +1683,100 @@ export default function Home() {
                       </div>
 
                       {!artMesmosDados && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-900/30 p-5 rounded-2xl border border-slate-850">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-5 rounded-2xl border border-slate-200">
                           <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-300">Razão Social - ART</label>
-                            <input type="text" {...register("artRazaoSocial")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                            <label className="text-xs font-semibold text-slate-700">Razão Social - ART</label>
+                            <input type="text" {...register("artRazaoSocial")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-300">CNPJ - ART</label>
+                            <label className="text-xs font-semibold text-slate-700">CNPJ - ART</label>
                             <input
                               type="text"
                               placeholder="Preencher somente números e sem pontuação"
                               {...register("artCnpj")}
                               onChange={(e) => setValue("artCnpj", formatCNPJ(e.target.value))}
-                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white font-mono"
+                              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 font-mono"
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-300">CEP - ART</label>
+                            <label className="text-xs font-semibold text-slate-700">CEP - ART</label>
                             <input
                               type="text"
                               placeholder="Preencher somente números e sem pontuação"
                               {...register("artCep")}
                               onChange={(e) => setValue("artCep", formatCEP(e.target.value))}
-                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white font-mono"
+                              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 font-mono"
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-300">Cidade/UF - ART</label>
-                            <input type="text" {...register("artCidadeUf")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                            <label className="text-xs font-semibold text-slate-700">Cidade/UF - ART</label>
+                            <input type="text" {...register("artCidadeUf")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                           </div>
                           <div className="space-y-1.5 md:col-span-2">
-                            <label className="text-xs font-semibold text-slate-300">Endereço da Empresa - ART</label>
-                            <input type="text" {...register("artEndereco")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                            <label className="text-xs font-semibold text-slate-700">Endereço da Empresa - ART</label>
+                            <input type="text" {...register("artEndereco")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                           </div>
                         </div>
                       )}
 
-                      <div className="space-y-4 border-t border-slate-800/40 pt-5">
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Dados Específicos da Obra</h4>
+                      <div className="space-y-4 border-t border-slate-200/40 pt-5">
+                        <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider">Dados Específicos da Obra</h4>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div className="space-y-1.5 md:col-span-2">
-                            <label className="text-xs font-semibold text-slate-300">Endereço da Obra</label>
-                            <input type="text" {...register("artEnderecoObra")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                            <label className="text-xs font-semibold text-slate-700">Endereço da Obra</label>
+                            <input type="text" {...register("artEnderecoObra")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-300">CEP da Obra</label>
+                            <label className="text-xs font-semibold text-slate-700">CEP da Obra</label>
                             <input
                               type="text"
                               placeholder="Preencher somente números e sem pontuação"
                               {...register("artCepObra")}
                               onChange={(e) => setValue("artCepObra", formatCEP(e.target.value))}
-                              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white font-mono"
+                              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 font-mono"
                             />
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-300">Cidade / Estado da Obra</label>
-                            <input type="text" {...register("artCidadeEstadoObra")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                            <label className="text-xs font-semibold text-slate-700">Cidade / Estado da Obra</label>
+                            <input type="text" {...register("artCidadeEstadoObra")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-300">Área total construída (m²) *</label>
-                            <input type="number" step="any" {...register("artAreaConstruida")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white" />
+                            <label className="text-xs font-semibold text-slate-700">Área total construída (m²) *</label>
+                            <input type="number" step="any" {...register("artAreaConstruida")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                           </div>
                           <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-300">Finalidade da Obra *</label>
-                            <select {...register("artFinalidadeObra")} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white">
+                            <label className="text-xs font-semibold text-slate-700">Data de Início da Obra <span className="text-rose-500">*</span></label>
+                            <input
+                              type="date"
+                              {...register("dataInicioObra")}
+                              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 font-mono"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-semibold text-slate-700">Data de Término da Obra <span className="text-rose-500">*</span></label>
+                            <input
+                              type="date"
+                              {...register("dataFimObra")}
+                              className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 font-mono"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-xs font-semibold text-slate-700">Finalidade da Obra *</label>
+                            <select {...register("artFinalidadeObra")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900">
                               {finalidadesObra.map((f) => (
-                                <option key={f} value={f} className="bg-slate-950 text-white">{f}</option>
+                                <option key={f} value={f} className="bg-slate-50 text-slate-900">{f}</option>
                               ))}
                             </select>
                           </div>
 
                           <div className="col-span-1 md:col-span-2 mt-2">
-                            <label className="flex items-start space-x-3 text-xs text-slate-400 cursor-pointer">
+                            <label className="flex items-start space-x-3 text-xs text-slate-600 cursor-pointer">
                               <input
                                 type="checkbox"
                                 {...register("artAutorizacaoArt")}
-                                className="rounded text-indigo-600 focus:ring-indigo-500 bg-slate-950 border-slate-800 mt-0.5"
+                                className="rounded text-emerald-600 focus:ring-emerald-500 bg-slate-50 border-slate-200 mt-0.5"
                               />
                               <span>Declaro que autorizo a emissão da Anotação de Responsabilidade Técnica (ART) com base nas informações preenchidas nesta seção do formulário. *</span>
                             </label>
@@ -1652,20 +1785,21 @@ export default function Home() {
                       </div>
                     </div>
                   )}
+
                 </div>
 
                 <div className="pt-6 flex justify-between">
                   <button
                     type="button"
                     onClick={() => setActiveTab("contrato")}
-                    className="px-6 py-3 border border-slate-800 hover:bg-slate-800/40 transition rounded-xl text-slate-300 text-sm font-medium"
+                    className="px-6 py-3 border border-slate-200 hover:bg-slate-100 transition rounded-xl text-slate-700 text-sm font-medium"
                   >
                     Voltar
                   </button>
                   <button
                     type="button"
                     onClick={() => nextTab("art", "feedback")}
-                    className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 transition duration-200 rounded-xl font-medium shadow-lg shadow-indigo-600/25 text-sm"
+                    className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 transition duration-200 rounded-xl font-medium shadow-lg shadow-emerald-600/25 text-sm"
                   >
                     Próxima Etapa: Finalizar
                   </button>
@@ -1675,18 +1809,18 @@ export default function Home() {
 
             {/* 6. FEEDBACK SECTION */}
             {activeTab === "feedback" && (
-              <div className="bg-slate-900/40 backdrop-blur-md border border-slate-850 p-6 md:p-8 rounded-3xl space-y-6">
-                <div className="flex items-center space-x-3 pb-4 border-b border-slate-800">
-                  <CheckCircle2 className="text-indigo-400 w-6 h-6" />
+              <div className="bg-white border border-slate-200 shadow-sm p-6 md:p-8 rounded-3xl space-y-6">
+                <div className="flex items-center space-x-3 pb-4 border-b border-slate-200">
+                  <CheckCircle2 className="text-emerald-600 w-6 h-6" />
                   <div>
-                    <h3 className="text-lg font-bold text-white">Seção 8: Feedback Final</h3>
-                    <p className="text-xs text-slate-400">De 0 a 10, que nota daria ao uso dessa ferramenta para coleta de dados?</p>
+                    <h3 className="text-lg font-bold text-slate-900">Seção 8: Feedback Final</h3>
+                    <p className="text-xs text-slate-600">De 0 a 10, que nota daria ao uso dessa ferramenta para coleta de dados?</p>
                   </div>
                 </div>
 
                 <div className="space-y-6">
                   <div className="space-y-3">
-                    <label className="text-sm font-semibold text-slate-300 block text-center">Deixe um feedback ao nosso time *</label>
+                    <label className="text-sm font-semibold text-slate-700 block text-center">Deixe um feedback ao nosso time *</label>
                     <div className="flex flex-wrap items-center justify-center gap-2">
                       {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
                         <button
@@ -1695,25 +1829,25 @@ export default function Home() {
                           onClick={() => setValue("feedbackNota", num)}
                           className={`w-10 h-10 md:w-11 md:h-11 rounded-xl text-sm font-bold flex items-center justify-center transition border ${
                             watch("feedbackNota") === num
-                              ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/30"
-                              : "bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700"
+                              ? "bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-600/30"
+                              : "bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-700"
                           }`}
                         >
                           {num}
                         </button>
                       ))}
                     </div>
-                    <div className="flex justify-between px-2 text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                    <div className="flex justify-between px-2 text-[10px] text-slate-600 font-bold uppercase tracking-wider">
                       <span>Péssimo</span>
                       <span>Excelente</span>
                     </div>
                   </div>
 
-                  <div className="bg-indigo-950/20 border border-indigo-500/15 p-5 rounded-2xl space-y-2">
-                    <h4 className="text-xs font-bold text-indigo-400 flex items-center gap-1.5">
+                  <div className="bg-slate-50 border border-slate-200 p-5 rounded-2xl space-y-2">
+                    <h4 className="text-xs font-bold text-emerald-600 flex items-center gap-1.5">
                       <Sparkles className="w-4 h-4" /> Pronto para enviar!
                     </h4>
-                    <p className="text-xs text-slate-400 leading-relaxed">
+                    <p className="text-xs text-slate-600 leading-relaxed">
                       Ao clicar em "Confirmar e Enviar", todas os seus dados cadastrais, contatos, dados de faturamento e preferências contratuais serão salvos no banco.
                     </p>
                   </div>
@@ -1723,14 +1857,14 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => setActiveTab("art")}
-                    className="px-6 py-3 border border-slate-800 hover:bg-slate-800/40 transition rounded-xl text-slate-300 text-sm font-medium"
+                    className="px-6 py-3 border border-slate-200 hover:bg-slate-100 transition rounded-xl text-slate-700 text-sm font-medium"
                   >
                     Voltar
                   </button>
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="px-8 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 active:from-indigo-700 active:to-purple-700 text-white rounded-xl font-bold shadow-xl shadow-indigo-600/30 text-sm transition duration-200 flex items-center space-x-2"
+                    className="px-8 py-3 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 active:from-emerald-700 active:to-teal-600 text-white rounded-xl font-bold shadow-xl shadow-emerald-600/30 text-sm transition duration-200 flex items-center space-x-2"
                   >
                     {submitting ? (
                       <>
@@ -1752,3 +1886,4 @@ export default function Home() {
     </div>
   );
 }
+

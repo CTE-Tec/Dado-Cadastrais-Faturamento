@@ -13,12 +13,12 @@ export function formatPhone(value: string): string {
   if (cleanValue.length <= 10) {
     return cleanValue
       .replace(/^(\d{2})(\d)/, '($1) $2')
-      .replace(/^(\((\d{2})\)\s\d{4})(\d)/, '$1-$2')
+      .replace(/^(\((\d{2})\)\s\d{4})(\d)/, '$1-$3')
       .substring(0, 14);
   }
   return cleanValue
     .replace(/^(\d{2})(\d)/, '($1) $2')
-    .replace(/^(\((\d{2})\)\s\d{5})(\d)/, '$1-$2')
+    .replace(/^(\((\d{2})\)\s\d{5})(\d)/, '$1-$3')
     .substring(0, 15);
 }
 
