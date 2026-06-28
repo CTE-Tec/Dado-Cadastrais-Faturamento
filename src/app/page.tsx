@@ -685,16 +685,12 @@ export default function Home() {
       const shouldSendDocWebhook = data.elaborarContrato && (docsSelecionados.length > 0 || outrosDocumentos.length > 0);
       if (shouldSendDocWebhook) {
         try {
-          const docWebhookPayload: Record<string, string | string[]> = {
+          const docWebhookPayload = {
             cliente_id: clientId,
             email: data.preenchedorEmail || data.contatoCobrancaEmail || "",
             documentos: docsSelecionados,
             outros_documentos: outrosDocumentos
           };
-
-          docsSelecionados.forEach((doc, index) => {
-            docWebhookPayload[`documentos[${index}]`] = doc;
-          });
 
           await fetch("https://n8n.cte.com.br/webhook/5f21b206-4569-4cfd-b54d-ffa4a5dfd546", {
             method: "POST",
