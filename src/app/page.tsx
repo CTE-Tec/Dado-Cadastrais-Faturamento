@@ -212,6 +212,7 @@ export default function Home() {
   const [clientIdParam, setClientIdParam] = useState<string | null>(null);
   const [loadingClient, setLoadingClient] = useState(true);
   const [pageBlockedReason, setPageBlockedReason] = useState<string | null>(null);
+  const [formAlreadyAnswered, setFormAlreadyAnswered] = useState(false);
   const [clientId, setClientId] = useState<string | null>(null);
   const [loadingCNPJ, setLoadingCNPJ] = useState(false);
   const [cnpjError, setCnpjError] = useState("");
@@ -315,6 +316,13 @@ export default function Home() {
 
       if (perfilErr) {
         console.warn("Perfil fetch warning:", perfilErr, clientIdString);
+      }
+
+      // Check if the form has already been answered
+      if (perfil?.status_formulario && perfil.status_formulario !== "pendente" && perfil.status_formulario !== "enviado") {
+        setFormAlreadyAnswered(true);
+        setLoadingClient(false);
+        return;
       }
 
       const buildOption = (days: number | null | undefined): { option: string; other: string } => {
@@ -662,6 +670,16 @@ export default function Home() {
 
       if (billingErr) throw billingErr;
 
+      // Update status_formulario to 'respondido'
+      const { error: statusErr } = await supabase
+        .from("faturamento_perfis")
+        .update({ status_formulario: "respondido" })
+        .eq("cliente_id", clientId);
+
+      if (statusErr) {
+        console.warn("Erro ao atualizar status_formulario:", statusErr);
+      }
+
       const docsSelecionados = (data.documentacaoNecessaria || []).filter((item): item is string => typeof item === "string");
       const outrosDocumentos = (data.documentacaoOutros || "").trim();
       const shouldSendDocWebhook = data.elaborarContrato && (docsSelecionados.length > 0 || outrosDocumentos.length > 0);
@@ -757,28 +775,25 @@ export default function Home() {
     );
   }
 
-  if (submitSuccess) {
+  if (submitSuccess || formAlreadyAnswered) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-900 px-4">
         <div className="max-w-md w-full bg-white border border-slate-200 p-8 rounded-3xl shadow-2xl shadow-slate-200/50 text-center space-y-6">
           <div className="w-20 h-20 bg-emerald-100 border-2 border-emerald-500 rounded-full flex items-center justify-center mx-auto text-emerald-600">
             <CheckCircle2 className="w-12 h-12" />
           </div>
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900">Obrigado!</h2>
+          <h2 className="text-2xl font-bold tracking-tight text-slate-900">
+            {formAlreadyAnswered ? "Formulário já preenchido" : "Obrigado!"}
+          </h2>
           <p className="text-slate-700">
-            Seus dados cadastrais e de faturamento foram coletados e enviados com sucesso.
+            {formAlreadyAnswered
+              ? "Este formulário já foi preenchido e enviado anteriormente. Caso precise fazer alguma alteração, entre em contato com a equipe CTE."
+              : "Seus dados cadastrais e de faturamento foram coletados e enviados com sucesso. Agradecemos pela colaboração!"}
           </p>
-          <div className="pt-4">
-            <button
-              onClick={() => {
-                setSubmitSuccess(false);
-                window.location.reload();
-              }}
-              className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 transition duration-200 rounded-xl font-medium shadow-lg shadow-emerald-600/25 text-sm text-white"
-            >
-              Preencher Novamente
-            </button>
-          </div>
+          <p className="text-sm text-slate-500">
+            Em caso de dúvidas, entre em contato pelo e-mail{" "}
+            <a href="mailto:adm.sus@cte.com.br" className="text-emerald-600 hover:underline font-medium">adm.sus@cte.com.br</a>
+          </p>
         </div>
       </div>
     );
