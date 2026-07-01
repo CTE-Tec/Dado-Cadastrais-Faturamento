@@ -1760,6 +1760,15 @@ export default function Home() {
                             <input type="number" step="any" {...register("artAreaConstruida")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900" />
                           </div>
                           <div className="space-y-1.5">
+                            <label className="text-xs font-semibold text-slate-700">Finalidade da Obra *</label>
+                            <select {...register("artFinalidadeObra")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900">
+                              {finalidadesObra.map((f) => (
+                                <option key={f} value={f} className="bg-slate-50 text-slate-900">{f}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="space-y-1.5">
                             <label className="text-xs font-semibold text-slate-700">Data de Início da Obra <span className="text-rose-500">*</span></label>
                             <input
                               type="date"
@@ -1775,15 +1784,6 @@ export default function Home() {
                               {...register("dataFimObra")}
                               className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900 font-mono"
                             />
-                          </div>
-
-                          <div className="space-y-1.5">
-                            <label className="text-xs font-semibold text-slate-700">Finalidade da Obra *</label>
-                            <select {...register("artFinalidadeObra")} className="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3 text-sm text-slate-900">
-                              {finalidadesObra.map((f) => (
-                                <option key={f} value={f} className="bg-slate-50 text-slate-900">{f}</option>
-                              ))}
-                            </select>
                           </div>
 
                           <div className="col-span-1 md:col-span-2 mt-2">
