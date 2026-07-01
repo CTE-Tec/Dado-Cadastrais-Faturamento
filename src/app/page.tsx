@@ -680,21 +680,24 @@ export default function Home() {
         console.warn("Erro ao atualizar status_formulario:", statusErr);
       }
 
-      const docsToNotify = buildDocumentacaoNecessariaPayload(data);
-      const shouldSendDocWebhook = data.elaborarContrato && docsToNotify.length > 0;
+      const docsSelecionados = (data.documentacaoNecessaria || []).filter((item): item is string => typeof item === "string");
+      const outrosDocumentos = (data.documentacaoOutros || "").trim();
+      const shouldSendDocWebhook = data.elaborarContrato && (docsSelecionados.length > 0 || outrosDocumentos.length > 0);
       if (shouldSendDocWebhook) {
         try {
+          const docWebhookPayload = {
+            cliente_id: clientId,
+            email: data.preenchedorEmail || data.contatoCobrancaEmail || "",
+            documentos: docsSelecionados,
+            outros_documentos: outrosDocumentos
+          };
+
           await fetch("https://n8n.cte.com.br/webhook/5f21b206-4569-4cfd-b54d-ffa4a5dfd546", {
             method: "POST",
             headers: {
               "Content-Type": "application/json"
             },
-            body: JSON.stringify({
-              cliente_id: clientId,
-              criado: true,
-              email: data.preenchedorEmail || data.contatoCobrancaEmail,
-              documentos: docsToNotify
-            })
+            body: JSON.stringify(docWebhookPayload)
           });
         } catch (webhookErr) {
           console.warn("Falha ao enviar webhook de documentos:", webhookErr);
@@ -711,7 +714,6 @@ export default function Home() {
         try {
           const formData = new FormData();
           formData.append("cliente_id", clientId);
-          formData.append("criado", "true");
           formData.append("email", data.preenchedorEmail || data.contatoCobrancaEmail);
           formData.append("documento", poDocumentFile, poDocumentFile.name);
 
